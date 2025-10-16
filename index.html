@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<html lang="en">
 <head>
     <meta charset="UTF-8" />
     <!-- Eliminada la referencia a /vite.svg para evitar ERR_FILE_NOT_FOUND -->
@@ -10,23 +10,15 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
-      /* --- CORRECCIONES PARA CHAT MÓVIL Y ESTABILIDAD --- */
-      html, body {
-          height: 100%;
-          width: 100%;
-          box-sizing: border-box; /* Asegura que padding y border no sumen altura/anchura */
-      }
+      /* --- TU CSS DE ANIMACIÓN INTEGRADO --- */
       body {
         font-family: 'Roboto', sans-serif;
         overscroll-behavior: none;
+        /* Asegura que la animación de la página funcione correctamente */
         position: relative; 
         min-height: 100vh;
-        overflow-x: hidden; /* Solo scroll vertical */
+        overflow: hidden; /* Evita barras de desplazamiento al mover elementos */
       }
-      *, *::before, *::after {
-          box-sizing: inherit;
-      }
-      /* --- FIN CORRECCIONES CHAT MÓVIL --- */
       .font-orbitron {
         font-family: 'Orbitron', sans-serif;
       }
@@ -44,17 +36,18 @@
         animation: pulse-glow 3s infinite ease-in-out;
       }
       
-      /* Animación flotante personalizada */
+      /* Animación flotante personalizada del usuario */
       .floating-text {
         position: absolute;
-        font-size: 48px; /* Tamaño ajustado previamente */
+        font-size: 48px;
         font-weight: bold;
+        /* Usamos el color de tu ejemplo (#00ff80) para el efecto flotante */
         color: #00ff80; 
         opacity: 1;
         animation: floatUp 0.8s ease-out forwards;
         pointer-events: none;
         text-shadow: 0 0 6px #00ff80;
-        z-index: 1000; 
+        z-index: 1000; /* Asegura que esté por encima de todo */
       }
 
       @keyframes floatUp {
@@ -63,9 +56,41 @@
           opacity: 1;
         }
         100% {
-          transform: translateY(-80px); 
+          transform: translateY(-80px); /* El valor que funciona para ti */
           opacity: 0;
         }
+      }
+      /* --- FIN CSS DE ANIMACIÓN INTEGRADO --- */
+      
+      /* --- ESTILOS DE CONGELAMIENTO (FREEZE) --- */
+      /* El overlay se coloca sobre toda la aplicación */
+      #freeze-overlay {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          z-index: 2000; /* Asegura que esté sobre todo el contenido de la app-container */
+          pointer-events: all; /* Importante para bloquear clics */
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          /* Tonalidad azul de congelamiento */
+          background-color: rgba(0, 150, 255, 0.2); 
+          backdrop-filter: blur(2px);
+          -webkit-backdrop-filter: blur(2px);
+          border-radius: 1rem;
+      }
+      
+      /* Animación de pulso azul hielo para el ícono/texto */
+      @keyframes ice-pulse {
+        0%, 100% { opacity: 0.8; transform: scale(1); text-shadow: 0 0 8px rgba(128, 255, 255, 0.8); }
+        50% { opacity: 1; transform: scale(1.05); text-shadow: 0 0 15px rgba(255, 255, 255, 1); }
+      }
+      .animate-ice-pulse {
+          animation: ice-pulse 1.5s infinite ease-in-out;
       }
 
       .hidden {
@@ -73,9 +98,21 @@
       }
     </style>
 </head>
-<body class="bg-gray-900 text-white flex items-center justify-center p-2">
-    <!-- Se cambia min-h-screen por h-full para heredar la altura estable -->
-    <div id="app-container" class="w-full max-w-md h-full max-h-[90vh] bg-black rounded-3xl border-4 border-cyan-400/50 shadow-2xl shadow-cyan-500/20 overflow-hidden flex flex-col">
+<body class="bg-gray-900 text-white min-h-screen flex items-center justify-center p-2">
+    <div id="app-container" class="w-full max-w-md h-[800px] max-h-[90vh] bg-black rounded-3xl border-4 border-cyan-400/50 shadow-2xl shadow-cyan-500/20 overflow-hidden flex flex-col">
+        
+        <!-- FREEZE OVERLAY: Capa que bloquea todo cuando el usuario está congelado -->
+        <div id="freeze-overlay" class="hidden">
+            <div class="text-cyan-200 animate-ice-pulse">
+                <!-- Ícono de copo de nieve o similar (Usamos ZapOff mejor) -->
+                <svg class="w-20 h-20 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"></path><path d="m14 4-2 18"></path><path d="m10 4 2 18"></path><path d="M4 14h16"></path><path d="M4 10h16"></path><path d="m20 16-16-3"></path><path d="m4 8 16 3"></path></svg>
+
+                <h2 class="font-orbitron text-3xl mb-2 text-shadow-lg">CONGELADO</h2>
+                <p id="freeze-timer" class="text-xl font-mono text-white"></p>
+                <p class="text-sm mt-4 text-gray-300">No puedes interactuar hasta que termine el castigo.</p>
+            </div>
+        </div>
+        
         <!-- Main Content Area -->
         <main class="flex-grow p-4 overflow-y-auto overflow-x-hidden">
             <!-- Registration Screen -->
@@ -127,6 +164,9 @@
                     <p>Participa en subastas y apuestas para ganar premios únicos.</p>
                 </div>
              </section>
+
+             <!-- Settings Screen (Eliminada) -->
+             <!-- <section id="screen-SETTINGS" class="screen hidden"></section> -->
 
         </main>
         
