@@ -61,10 +61,10 @@
         }
       }
       /* --- FIN CSS DE ANIMACIÓN INTEGRADO --- */
-      
+
       /* --- ESTILOS DE CONGELAMIENTO (FREEZE) --- */
       /* El overlay se coloca sobre toda la aplicación */
-      #freeze-overlay {
+      #freeze-overlay, #flame-overlay {
           position: absolute;
           top: 0;
           left: 0;
@@ -77,20 +77,34 @@
           align-items: center;
           justify-content: center;
           text-align: center;
-          /* Tonalidad azul de congelamiento */
-          background-color: rgba(0, 150, 255, 0.2); 
           backdrop-filter: blur(2px);
           -webkit-backdrop-filter: blur(2px);
           border-radius: 1rem;
       }
       
-      /* Animación de pulso azul hielo para el ícono/texto */
+      /* Estilos para FREEZE (Hielo) */
+      #freeze-overlay {
+          background-color: rgba(0, 150, 255, 0.2); 
+      }
       @keyframes ice-pulse {
         0%, 100% { opacity: 0.8; transform: scale(1); text-shadow: 0 0 8px rgba(128, 255, 255, 0.8); }
         50% { opacity: 1; transform: scale(1.05); text-shadow: 0 0 15px rgba(255, 255, 255, 1); }
       }
       .animate-ice-pulse {
           animation: ice-pulse 1.5s infinite ease-in-out;
+      }
+
+      /* --- ESTILOS DE DRENAJE (FLAME) --- */
+      #flame-overlay {
+          background-color: rgba(255, 100, 0, 0.3); /* Tonalidad roja/naranja */
+      }
+      /* Animación de pulso rojo fuego para el ícono/texto */
+      @keyframes flame-pulse {
+        0%, 100% { opacity: 0.9; transform: scale(1); text-shadow: 0 0 8px rgba(255, 50, 0, 0.9); }
+        50% { opacity: 1; transform: scale(1.05); text-shadow: 0 0 15px rgba(255, 150, 0, 1); }
+      }
+      .animate-flame-pulse {
+          animation: flame-pulse 0.8s infinite ease-in-out;
       }
 
       .hidden {
@@ -104,15 +118,31 @@
         <!-- FREEZE OVERLAY: Capa que bloquea todo cuando el usuario está congelado -->
         <div id="freeze-overlay" class="hidden">
             <div class="text-cyan-200 animate-ice-pulse">
-                <!-- Ícono de copo de nieve o similar (Usamos ZapOff mejor) -->
                 <svg class="w-20 h-20 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20"></path><path d="m14 4-2 18"></path><path d="m10 4 2 18"></path><path d="M4 14h16"></path><path d="M4 10h16"></path><path d="m20 16-16-3"></path><path d="m4 8 16 3"></path></svg>
 
                 <h2 class="font-orbitron text-3xl mb-2 text-shadow-lg">CONGELADO</h2>
                 <p id="freeze-timer" class="text-xl font-mono text-white"></p>
                 <p class="text-sm mt-4 text-gray-300">No puedes interactuar hasta que termine el castigo.</p>
+                
+                <!-- Botón de Rescate (Bailout) - Solo se muestra si el jugador tiene suficientes monedas -->
+                <button id="freeze-bailout-button" data-cost="20000" class="mt-6 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-600 disabled:cursor-not-allowed">
+                    Pagar Rescate (20,000)
+                </button>
             </div>
         </div>
         
+        <!-- FLAME OVERLAY: Capa que muestra el drenaje -->
+        <!-- NOTA: Flame NO bloquea clics, solo muestra el efecto visual de castigo -->
+        <div id="flame-overlay" class="hidden pointer-events-none">
+            <div class="text-yellow-300 animate-flame-pulse">
+                <!-- Ícono de Fuego (usando un Bolt modificado o un SVG de llama simple) -->
+                <svg class="w-20 h-20 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.83-2.32-2.31-3.25C6.71 7.21 5 6 5 3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2c0 3-1.71 4.21-3.69 5.75C13.83 9.68 13 10.62 13 12a2.5 2.5 0 0 0 2.5 2.5V23h-3.5V14.5z"></path></svg>
+                <h2 class="font-orbitron text-3xl mb-2 text-shadow-lg">DRENAJE DE FUEGO</h2>
+                <p id="flame-timer" class="text-xl font-mono text-white"></p>
+                <p class="text-sm mt-4 text-gray-300">Estás perdiendo monedas por segundo (5% inicial).</p>
+            </div>
+        </div>
+
         <!-- Main Content Area -->
         <main class="flex-grow p-4 overflow-y-auto overflow-x-hidden">
             <!-- Registration Screen -->
