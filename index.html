@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8" />
-    <!-- Eliminada la referencia a /vite.svg para evitar ERR_FILE_NOT_FOUND -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>CyberTap Conquest</title>
     <script src="https://cdn.tailwindcss.com"></script>
@@ -14,10 +13,9 @@
       body {
         font-family: 'Roboto', sans-serif;
         overscroll-behavior: none;
-        /* Asegura que la animación de la página funcione correctamente */
         position: relative; 
         min-height: 100vh;
-        overflow: hidden; /* Evita barras de desplazamiento al mover elementos */
+        overflow: hidden;
       }
       .font-orbitron {
         font-family: 'Orbitron', sans-serif;
@@ -47,7 +45,7 @@
         animation: floatUp 0.8s ease-out forwards;
         pointer-events: none;
         text-shadow: 0 0 6px #00ff80;
-        z-index: 1000; /* Asegura que esté por encima de todo */
+        z-index: 1000;
       }
 
       @keyframes floatUp {
@@ -56,35 +54,29 @@
           opacity: 1;
         }
         100% {
-          transform: translateY(-80px); /* El valor que funciona para ti */
+          transform: translateY(-80px);
           opacity: 0;
         }
       }
-      /* --- FIN CSS DE ANIMACIÓN INTEGRADO --- */
-
-      /* --- ESTILOS DE CONGELAMIENTO (FREEZE) --- */
-      /* El overlay se coloca sobre toda la aplicación */
-      #freeze-overlay, #flame-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 100%;
-          height: 100%;
-          z-index: 2000; /* Asegura que esté sobre todo el contenido de la app-container */
-          pointer-events: all; /* Importante para bloquear clics */
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
-          backdrop-filter: blur(2px);
-          -webkit-backdrop-filter: blur(2px);
-          border-radius: 1rem;
-      }
       
-      /* Estilos para FREEZE (Hielo) */
+      /* --- ESTILOS DE CONGELAMIENTO (FREEZE) --- */
       #freeze-overlay {
-          background-color: rgba(0, 150, 255, 0.2); 
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        z-index: 2000;
+        pointer-events: all;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        text-align: center;
+        background-color: rgba(0, 150, 255, 0.2);
+        backdrop-filter: blur(2px);
+        -webkit-backdrop-filter: blur(2px);
+        border-radius: 1rem;
       }
       @keyframes ice-pulse {
         0%, 100% { opacity: 0.8; transform: scale(1); text-shadow: 0 0 8px rgba(128, 255, 255, 0.8); }
@@ -93,18 +85,34 @@
       .animate-ice-pulse {
           animation: ice-pulse 1.5s infinite ease-in-out;
       }
-
-      /* --- ESTILOS DE DRENAJE (FLAME) --- */
+      
+      /* --- NUEVOS ESTILOS DE LLAMA (FLAME / BURNING) --- */
       #flame-overlay {
-          background-color: rgba(255, 100, 0, 0.3); /* Tonalidad roja/naranja */
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          z-index: 1999; /* Por debajo de FREEZE */
+          pointer-events: none; /* NO bloquea clics, solo efecto visual */
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          /* Tonalidad roja/naranja de drenaje */
+          background-color: rgba(255, 50, 0, 0.1); 
+          backdrop-filter: brightness(1.2);
+          -webkit-backdrop-filter: brightness(1.2);
+          border-radius: 1rem;
       }
-      /* Animación de pulso rojo fuego para el ícono/texto */
+
       @keyframes flame-pulse {
-        0%, 100% { opacity: 0.9; transform: scale(1); text-shadow: 0 0 8px rgba(255, 50, 0, 0.9); }
-        50% { opacity: 1; transform: scale(1.05); text-shadow: 0 0 15px rgba(255, 150, 0, 1); }
+          0%, 100% { opacity: 0.8; transform: scale(1); text-shadow: 0 0 8px rgba(255, 100, 0, 0.8); }
+          50% { opacity: 1; transform: scale(1.05); text-shadow: 0 0 15px rgba(255, 200, 0, 1); }
       }
       .animate-flame-pulse {
-          animation: flame-pulse 0.8s infinite ease-in-out;
+          animation: flame-pulse 1s infinite alternate;
       }
 
       .hidden {
@@ -124,22 +132,18 @@
                 <p id="freeze-timer" class="text-xl font-mono text-white"></p>
                 <p class="text-sm mt-4 text-gray-300">No puedes interactuar hasta que termine el castigo.</p>
                 
-                <!-- Botón de Rescate (Bailout) - Solo se muestra si el jugador tiene suficientes monedas -->
-                <button id="freeze-bailout-button" data-cost="20000" class="mt-6 bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-4 rounded-lg disabled:bg-gray-600 disabled:cursor-not-allowed">
+                <!-- Botón de Rescate (Bailout) -->
+                <button id="freeze-bailout-button" class="mt-6 bg-red-600 hover:bg-red-500 disabled:bg-red-900/50 text-white font-bold py-3 px-6 rounded-lg transition-colors text-lg flex items-center justify-center space-x-2" data-cost="20000">
                     Pagar Rescate (20,000)
                 </button>
             </div>
         </div>
         
-        <!-- FLAME OVERLAY: Capa que muestra el drenaje -->
-        <!-- NOTA: Flame NO bloquea clics, solo muestra el efecto visual de castigo -->
-        <div id="flame-overlay" class="hidden pointer-events-none">
-            <div class="text-yellow-300 animate-flame-pulse">
-                <!-- Ícono de Fuego (usando un Bolt modificado o un SVG de llama simple) -->
-                <svg class="w-20 h-20 mx-auto mb-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.83-2.32-2.31-3.25C6.71 7.21 5 6 5 3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2c0 3-1.71 4.21-3.69 5.75C13.83 9.68 13 10.62 13 12a2.5 2.5 0 0 0 2.5 2.5V23h-3.5V14.5z"></path></svg>
-                <h2 class="font-orbitron text-3xl mb-2 text-shadow-lg">DRENAJE DE FUEGO</h2>
-                <p id="flame-timer" class="text-xl font-mono text-white"></p>
-                <p class="text-sm mt-4 text-gray-300">Estás perdiendo monedas por segundo (5% inicial).</p>
+        <!-- FLAME OVERLAY: Capa visual de drenaje (no bloquea clics) -->
+         <div id="flame-overlay" class="hidden">
+            <div class="text-orange-400 animate-flame-pulse">
+                <h2 class="font-orbitron text-2xl mb-2">¡DRENAJE ACTIVO!</h2>
+                <p id="flame-timer" class="text-lg font-mono text-white"></p>
             </div>
         </div>
 
@@ -187,11 +191,35 @@
 
              <!-- Auctions Screen -->
              <section id="screen-AUCTIONS" class="screen hidden">
-                <div class="flex flex-col items-center justify-center h-full text-center text-gray-500">
-                    <svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 12-8.373 8.373a2.49 2.49 0 1 1-3.52-3.52L11.5 8.5"></path><path d="m18 5 3 3"></path></svg>
-                    <h2 class="font-orbitron text-2xl mt-4">Remates</h2>
-                    <p class="mt-2">Esta sección está en desarrollo.</p>
-                    <p>Participa en subastas y apuestas para ganar premios únicos.</p>
+                 <div class="flex flex-col h-full p-4">
+                    <h2 class="font-orbitron text-3xl text-center mb-6 text-cyan-300">Arca Común & Remates</h2>
+                    
+                    <div id="arca-comun-status" class="bg-gray-800/50 p-4 rounded-xl border border-gray-700 mb-6 text-center">
+                        <p class="text-sm text-gray-400">Pozo Acumulado (Arca Común)</p>
+                        <div class="flex items-center justify-center space-x-2 mt-1">
+                            <div class="w-6 h-6 text-yellow-300">${Icons.Gem.replace('w-4 h-4', 'w-6 h-6')}</div>
+                            <h3 id="arca-comun-coins" class="font-orbitron text-3xl font-bold">0</h3>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-2">Fondos de penalizaciones y quitas.</p>
+                    </div>
+
+                    <div id="auction-details" class="flex-grow bg-gray-800/50 p-4 rounded-xl border border-gray-700">
+                        <h3 class="font-orbitron text-xl mb-3 text-center text-yellow-400">Subasta Diaria</h3>
+                        <div class="space-y-2 text-sm">
+                            <p>Tiempo Restante: <span id="auction-timer" class="font-mono text-cyan-300">--:--:--</span></p>
+                            <p>Pozo a Ganar: <span id="auction-pot" class="font-bold text-yellow-300">0</span></p>
+                            <p>Puja Actual: <span id="auction-bid" class="font-bold text-white">0</span> (<span id="auction-leader" class="text-cyan-400">Nadie</span>)</p>
+                        </div>
+                        
+                        <form id="auction-bid-form" class="mt-6">
+                            <label for="bid-input" class="block text-sm font-semibold mb-2">Tu Puja (Mínimo: <span id="min-bid-display">0</span>)</label>
+                            <input type="number" id="bid-input" placeholder="Ingresa tu puja" min="1" class="w-full text-center bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-lg focus:outline-none focus:ring-2 focus:ring-cyan-400" />
+                            <p id="bid-error" class="text-red-400 my-2 text-center hidden"></p>
+                            <button id="bid-button" type="submit" class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-black font-bold py-3 px-4 rounded-lg transition-colors text-lg font-orbitron flex items-center justify-center space-x-2 mt-4">
+                                Pujar
+                            </button>
+                        </form>
+                    </div>
                 </div>
              </section>
 
