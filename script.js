@@ -1,5 +1,5 @@
 // =================================================================================
-//      CYBERTAP CONQUEST - VANILLA JS CLIENT
+//      CYBERTAP CONQUEST - VANILLA JS CLIENT 1.3 (FLAME & FREEZE FAIRPLAY)
 // =================================================================================
 // Este script contiene toda la lógica de frontend para el juego.
 
@@ -21,18 +21,26 @@ let state = {
     backgroundSyncIntervalId: null,
     selectedCardForUse: null,
     isChatOpen: false, // Controla el estado abierto/cerrado del chat
-    freezeTimerIntervalId: null, // Nuevo: ID para el intervalo del temporizador de congelamiento
+    freezeTimerIntervalId: null, // ID para el intervalo del temporizador de congelamiento
+    flameTimerIntervalId: null, // NUEVO: ID para el intervalo del temporizador de llama
+    // Nuevo estado para controlar qué botón de acción está cargando
+    loadingAction: null, // Puede ser 'boosts', 'cards', 'use_card_TARGETID', 'bailout', 'bid_auction'
+    // Almacenamiento temporal para simular el decremento visible de monedas
+    coinsBeforeFlame: null, 
+    coinsTargetFlame: null,
 };
 
 // --- CONSTANTES & DEFINICIONES (from constants.ts, types.ts) ---
-const CardType = { FREEZE: 'FREEZE', SHIELD: 'SHIELD', THIEF: 'THIEF', PASSIVE_INCOME_1: 'PASSIVE_INCOME_1' };
+// NUEVA CARTA FLAME: Drena el 5% inicial y aplica drenaje por segundo.
+const CardType = { FREEZE: 'FREEZE', SHIELD: 'SHIELD', THIEF: 'THIEF', PASSIVE_INCOME_1: 'PASSIVE_INCOME_1', FLAME: 'FLAME' };
 const BoostType = { MULTITAP: 'MULTITAP', ENERGY_LIMIT: 'ENERGY_LIMIT' };
 
 const CARD_DEFINITIONS = {
   [CardType.FREEZE]: { id: CardType.FREEZE, name: 'Congelar', description: 'Congela a un oponente por 10 minutos, impidiendo que gane monedas.', cost: 7500, isSingleUse: true },
-  [CardType.SHIELD]: { id: CardType.SHIELD, name: 'Escudo', description: 'Te protege del próximo ataque de "Congelar". Se consume al usarse.', cost: 5000, isSingleUse: true },
+  [CardType.SHIELD]: { id: CardType.SHIELD, name: 'Escudo', description: 'Te protege del próximo ataque de "Congelar" o "Llama". Se consume al usarse.', cost: 5000, isSingleUse: true },
   [CardType.THIEF]: { id: CardType.THIEF, name: 'Ladrón', description: 'Roba un 5% de las monedas de un oponente. Puede fallar.', cost: 10000, isSingleUse: true },
   [CardType.PASSIVE_INCOME_1]: { id: CardType.PASSIVE_INCOME_1, name: 'Data Miner v1', description: 'Genera 1 de Ganancia x Día (XP) por segundo.', cost: 20000, isSingleUse: false, passiveGain: 1 },
+  [CardType.FLAME]: { id: CardType.FLAME, name: 'Llama', description: 'Drena inmediatamente el 5% de las monedas del oponente y las drena por 30s.', cost: 9000, isSingleUse: true },
 };
 
 const BOOST_DEFINITIONS = {
@@ -40,9 +48,15 @@ const BOOST_DEFINITIONS = {
   [BoostType.ENERGY_LIMIT]: { id: BoostType.ENERGY_LIMIT, name: 'Límite de Energía', description: (level) => `Aumenta la energía máxima en 500.`, getCost: (level) => 5000 * (2 ** (level - 1)) },
 };
 
+// Costo de rescate (Bailout)
+const FREEZE_BAILOUT_COST = 20000; 
+// Duración de castigos para simulación (10 mins base original)
+const FREEZE_DURATION_MS = 10 * 60 * 1000; 
+const FLAME_DURATION_MS = 30 * 1000; // 30 segundos para FLAME
+
 // Sonidos internos (Base64 para baja latencia)
 const TAP_SOUND = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YQQAAAAAAAD/AAAA';
-const ENERGY_EMPTY_SOUND = 'data:audio/wav;base64,UklGRkIAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YVwAAACx/8D/x//H/8v/z//P/8//zP/I/7r/q/+r/6n/qf+p/6b/mv+V/5L/kv+T/5b/nP+j/6n/sP+7/8T/z//X//n//f/9//3//f/9//3//f/9//3//f/9//3//f/5/9w==';
+const ENERGY_EMPTY_SOUND = 'data:audio/wav;base64,UklGRkIAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YVwAAACx/8D/x//H/8v/z//P/8//zP/I/7r/q/+r/6n/qf+p/6b/mv+V/5L/kv+T/5b/nP/P//n//f/9//3//f/9//3//f/9//3//f/9//3//f/5/9w==';
 const NAV_SOUND = 'data:audio/wav;base64,UklGRkoAAABXQVZFZm10IBAAAAABAAEAESsAAESsAAABAAgAZGF0YUYAAAAA/v8A/v8A/v8AAAAA/v8A/v8A/v8A/v8AAAAAAAD+/wD+/wD+/wAAAAAAAAAAAP7/AP7/AP7/AAAAAAAAAAAAAP7/AP7/AP7/';
 // Nuevo sonido: Tono simple para "Sin energía/Bloqueado" (sonido de error/click sin efecto)
 const BLOCKED_SOUND = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YQYAAAAA/P4A/P4A/P4A/P4A/P4A/P4A';
@@ -67,6 +81,7 @@ const Icons = {
     Send: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>`,
     Shield: `<svg class="w-4 h-4 text-cyan-400" title="Protegido" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>`,
     ZapOff: `<svg class="w-4 h-4 text-blue-400" title="Congelado" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="12.41 6.75 13 2 10.57 4.92"></polyline><polyline points="18.57 12.91 21 10 15.66 10"></polyline><polyline points="8 8 3 14 12 14 11 22 16 16"></polyline><line x1="1" y1="1" x2="23" y2="23"></line></svg>`,
+    Flame: `<svg class="w-4 h-4 text-orange-400" title="Drenando" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.83-2.32-2.31-3.25C6.71 7.21 5 6 5 3a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2c0 3-1.71 4.21-3.69 5.75C13.83 9.68 13 10.62 13 12a2.5 2.5 0 0 0 2.5 2.5V23h-3.5V14.5z"></path></svg>`,
 };
 
 // Se elimina 'SETTINGS' de la navegación
@@ -145,14 +160,7 @@ const gameApi = {
     async fetchFromGas(method, params, attempt = 1) {
         const MAX_RETRIES = 3;
         const INITIAL_BACKOFF_MS = 300;
-        // NOTE: La URL del GAS tiene un error de copia que voy a ignorar por ahora
-        // ya que el contexto anterior ya lo tenía. 
-        // if (GAS_URL.startsWith('https://script.google.com/macros/s/AKfycbxz6JnxM1cfoh3awHKDGgewLEJBUSyMJmYOndymKhJtnd6OcINgCwlwmBYrR/exec')) {
-        //    // This is the provided URL, we can proceed.
-        // } else if (GAS_URL.startsWith('REEMPLAZA_ESTA_URL')) {
-        //     throw new Error('¡CONFIGURACIÓN NECESARIA! URL de backend no configurada.');
-        // }
-
+        
         try {
             let response;
             if (method === 'GET') {
@@ -202,15 +210,15 @@ const gameApi = {
 // --- UTILITIES ---
 
 /**
- * Calcula el tiempo restante de congelamiento y lo formatea.
- * @param {number} freezeUntilTimestamp El timestamp (ms) hasta el que está congelado.
+ * Calcula el tiempo restante de congelamiento y lo formatea (usado también por FLAME).
+ * @param {number} untilTimestamp El timestamp (ms) hasta el que está activo el efecto.
  * @returns {string | null} El tiempo restante en formato MM:SS, o null si ya expiró.
  */
-function getRemainingFreezeTime(freezeUntilTimestamp) {
-    if (!freezeUntilTimestamp || freezeUntilTimestamp <= Date.now()) {
+function getRemainingTime(untilTimestamp) {
+    if (!untilTimestamp || untilTimestamp <= Date.now()) {
         return null;
     }
-    const remainingMs = freezeUntilTimestamp - Date.now();
+    const remainingMs = untilTimestamp - Date.now();
     const remainingSeconds = Math.floor(remainingMs / 1000);
     
     const minutes = Math.floor(remainingSeconds / 60);
@@ -222,17 +230,90 @@ function getRemainingFreezeTime(freezeUntilTimestamp) {
     return `${formattedMinutes}:${formattedSeconds}`;
 }
 
+// Función para animar la pérdida de monedas (Efecto regresivo)
+let animationFrameId = null;
+
+function animateCoinLoss(initialCoins, targetCoins, durationMs = 500) {
+    const startTime = performance.now();
+    const coinEl = getEl('coins-display'); // Asumiendo que HOME tiene un elemento con este ID
+
+    if (!coinEl) return;
+    
+    // Limpiar animación anterior si existe
+    if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
+    function step(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(1, elapsed / durationMs);
+        
+        // Interpolación lineal entre el valor inicial y el objetivo
+        const currentCoins = initialCoins - (initialCoins - targetCoins) * progress;
+        
+        coinEl.textContent = Math.floor(currentCoins).toLocaleString();
+
+        if (progress < 1) {
+            animationFrameId = requestAnimationFrame(step);
+        } else {
+            // Asegurar que el valor final sea exacto
+            coinEl.textContent = Math.floor(targetCoins).toLocaleString();
+            animationFrameId = null;
+        }
+    }
+
+    animationFrameId = requestAnimationFrame(step);
+}
+
 
 // --- DOM MANIPULATION & RENDERING ---
 function getEl(id) { return document.getElementById(id); }
 
 function updateState(newState) {
-    const oldMessagesCount = state.gameState?.messages.length || 0;
+    const oldMessagesCount = state.gameState?.messages?.length || 0;
     
+    // Si viene un nuevo gameState
+    if (newState.gameState) {
+        newState.loadingAction = null;
+        
+        // 1. Manejo de la animación inicial de FLAME (pérdida del 5%)
+        const oldPlayer = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+        const newPlayer = newState.gameState.players?.find(p => p.id === state.humanPlayerId);
+
+        if (oldPlayer && newPlayer && newPlayer.isBurningUntil && !oldPlayer.isBurningUntil) {
+             // Si el jugador acaba de empezar a arder (isBurningUntil pasa de 0 a >0)
+             
+             // NOTA: La pérdida real de monedas (5% inicial) debe ser enviada por el backend.
+             // Aquí, solo simulamos el target de la animación si hay una diferencia notable.
+             const coinsDifference = oldPlayer.coins - newPlayer.coins;
+             
+             // Si la diferencia es mayor a 0 (hubo pérdida inicial del 5% o más)
+             if (coinsDifference > 0) {
+                 const initialCoins = oldPlayer.coins;
+                 const targetCoins = newPlayer.coins;
+                 
+                 // Guardar valores para la animación
+                 newState.coinsBeforeFlame = initialCoins;
+                 newState.coinsTargetFlame = targetCoins;
+             }
+        } else if (newPlayer && !newPlayer.isBurningUntil) {
+             // Limpiar si ya no está ardiendo
+             newState.coinsBeforeFlame = null;
+             newState.coinsTargetFlame = null;
+        }
+    }
+
     Object.assign(state, newState);
     render();
+    
+    // 2. Disparar la animación después del render para que el DOM esté listo
+    if (state.coinsBeforeFlame !== null && state.coinsTargetFlame !== null) {
+        animateCoinLoss(state.coinsBeforeFlame, state.coinsTargetFlame);
+        // Limpiamos los valores temporales después de disparar la animación
+        state.coinsBeforeFlame = null;
+        state.coinsTargetFlame = null;
+    }
 
-    if (state.gameState && state.gameState.messages.length > oldMessagesCount) {
+
+    if (state.gameState?.messages && state.gameState.messages.length > oldMessagesCount) {
         const latestMessage = state.gameState.messages[state.gameState.messages.length - 1];
         const sender = state.gameState.players.find(p => p.id === latestMessage.playerId);
         // Llama a la función playMessageSound con el control de si es mensaje propio
@@ -258,27 +339,45 @@ function render() {
     const appNav = getEl('app-nav');
     const allScreens = document.querySelectorAll('.screen');
     const freezeOverlay = getEl('freeze-overlay');
+    const flameOverlay = getEl('flame-overlay');
 
-    const player = state.gameState?.players.find(p => p.id === state.humanPlayerId);
+    const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+    
+    // Estado de castigo
     const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const isBurning = player && player.isBurningUntil && player.isBurningUntil > Date.now();
     
     // 1. Manejo del overlay de congelamiento
     if (isFrozen) {
         freezeOverlay.classList.remove('hidden');
+        if (flameOverlay) flameOverlay.classList.add('hidden'); // El Freeze anula el Flame
         // Iniciar el temporizador del overlay si no está corriendo
         if (!state.freezeTimerIntervalId) {
-            // Usamos un intervalo de 1 segundo para actualizar el contador
             state.freezeTimerIntervalId = setInterval(renderFreezeOverlay, 1000);
         }
     } else {
         freezeOverlay.classList.add('hidden');
-        // Detener el temporizador si ya no está congelado
         if (state.freezeTimerIntervalId) {
             clearInterval(state.freezeTimerIntervalId);
             state.freezeTimerIntervalId = null;
         }
     }
+    
+    // 2. Manejo del overlay de llama/drenaje
+    if (isBurning && !isFrozen) {
+        if (flameOverlay) flameOverlay.classList.remove('hidden');
+        if (!state.flameTimerIntervalId) {
+            state.flameTimerIntervalId = setInterval(renderFlameOverlay, 1000);
+        }
+    } else {
+        if (flameOverlay) flameOverlay.classList.add('hidden');
+        if (state.flameTimerIntervalId) {
+            clearInterval(state.flameTimerIntervalId);
+            state.flameTimerIntervalId = null;
+        }
+    }
 
+    // Lógica de navegación y pantallas
     if (state.isLoading && !state.gameState) {
         registrationScreen.classList.add('hidden');
         loadingScreen.classList.remove('hidden');
@@ -296,7 +395,6 @@ function render() {
         allScreens.forEach(s => s.classList.add('hidden'));
         if(state.selectedCardForUse) {
             getEl(`screen-CARDS`).classList.remove('hidden');
-            // Corregido: Llamada directa a la función de renderizado de Cartas
             window.renderCARDSScreen(); 
         } else {
             const activeScreen = getEl(`screen-${state.activePage}`);
@@ -306,7 +404,8 @@ function render() {
 
     // Render components
     if (state.humanPlayerId && state.gameState) {
-        renderNav(isFrozen); // Pasar estado de congelamiento a Nav
+        // La navegación se deshabilita solo si está congelado
+        renderNav(isFrozen); 
         renderFooter();
         // Render current page
         const renderFunction = window[`render${state.activePage}Screen`];
@@ -323,21 +422,74 @@ function render() {
     }
 }
 
-// Nueva función de renderizado para el overlay de congelamiento
+// Función para el contador de la Llama
+function renderFlameOverlay() {
+    const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+    const flameTimerEl = getEl('flame-timer');
+
+    if (!player || !player.isBurningUntil || player.isBurningUntil <= Date.now()) {
+        if (flameTimerEl) flameTimerEl.textContent = '00:00';
+        // Forzar recarga de estado para confirmar el fin del efecto
+        if (player && !player.isBurningUntil) loadGameState(state.humanPlayerId); 
+        return;
+    }
+
+    const remainingTime = getRemainingTime(player.isBurningUntil);
+    if (flameTimerEl) {
+        flameTimerEl.textContent = remainingTime;
+    }
+}
+
+
+// Nueva función de renderizado para el overlay de congelamiento (Incluye Rescate)
 function renderFreezeOverlay() {
-    const player = state.gameState?.players.find(p => p.id === state.humanPlayerId);
+    const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
     const freezeTimerEl = getEl('freeze-timer');
+    const bailoutButton = getEl('freeze-bailout-button');
+    const cost = FREEZE_BAILOUT_COST;
 
     if (!player || !player.isFrozenUntil || player.isFrozenUntil <= Date.now()) {
-        // La condición de no congelado se manejará en la función `render` principal
-        // que detendrá el intervalo. Aquí solo actualizamos el texto si es necesario.
         if (freezeTimerEl) freezeTimerEl.textContent = '00:00';
         return;
     }
 
-    const remainingTime = getRemainingFreezeTime(player.isFrozenUntil);
+    const remainingTime = getRemainingTime(player.isFrozenUntil);
     if (freezeTimerEl) {
         freezeTimerEl.textContent = remainingTime;
+    }
+    
+    // Lógica del botón de Rescate
+    if (bailoutButton) {
+        const canAfford = player.coins >= cost;
+        const isLoading = state.loadingAction === 'bailout';
+        
+        bailoutButton.textContent = isLoading 
+            ? `Pagando Rescate... ${Icons.Spinner.replace('w-5 h-5', 'w-4 h-4')}`
+            : `Pagar Rescate (${cost.toLocaleString()})`;
+            
+        bailoutButton.disabled = !canAfford || isLoading;
+        bailoutButton.dataset.cost = cost;
+        
+        // Adjuntar listener (se podría mover a setupEventListeners para eficiencia)
+        if (!bailoutButton.hasAttribute('data-listener-attached')) {
+             bailoutButton.addEventListener('click', async () => {
+                if (bailoutButton.disabled) {
+                    playSound(BLOCKED_SOUND);
+                    return;
+                }
+                
+                // 1. Mostrar Loader
+                updateState({ loadingAction: 'bailout' });
+                
+                // 2. Disparar acción de rescate
+                try {
+                    await dispatch('FREEZE_BAILOUT', { cost: cost });
+                } catch (e) {
+                    // El dispatch maneja la limpieza y el error
+                }
+            });
+            bailoutButton.setAttribute('data-listener-attached', 'true');
+        }
     }
     
     // Si el tiempo restante es nulo (expiró), forzamos un re-render completo
@@ -373,12 +525,17 @@ window.renderHOMEScreen = () => {
     const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
     if (!player) return;
     const xpPercentage = player.maxDailyGain > 0 ? (player.dailyGain / player.maxDailyGain) * 100 : 0;
-    const energyPercentage = player.maxEnergy > 0 ? (player.energy / player.maxEnergy) * 100 : 0;
+    // La energía ahora se regenera incluso si está congelado
+    const energyPercentage = player.maxEnergy > 0 ? (player.energy / player.maxEnergy) * 100 : 0; 
     
     // Determinar si el botón debe estar deshabilitado por falta de energía O por congelamiento
     const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const isBurning = player.isBurningUntil && player.isBurningUntil > Date.now();
     const isDisabled = player.energy <= 0 || isFrozen;
     const disabledClass = isDisabled ? 'disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed disabled:animate-none' : '';
+    
+    // Monedas a mostrar (usa el valor real del estado a menos que esté en animación)
+    const coinsDisplayValue = Math.floor(player.coins).toLocaleString();
 
     getEl('screen-HOME').innerHTML = `
         <div class="flex flex-col h-full text-center">
@@ -406,7 +563,7 @@ window.renderHOMEScreen = () => {
             <div class="my-2">
                 <div class="flex items-center justify-center space-x-2">
                     <div class="w-8 h-8 text-yellow-300">${Icons.Gem.replace('w-4 h-4', 'w-8 h-8')}</div>
-                    <h1 class="font-orbitron text-4xl font-bold tracking-wider">${Math.floor(player.coins).toLocaleString()}</h1>
+                    <h1 id="coins-display" class="font-orbitron text-4xl font-bold tracking-wider">${coinsDisplayValue}</h1>
                 </div>
             </div>
             <div id="flexing-point" class="flex-grow flex items-center justify-center px-4">
@@ -419,7 +576,7 @@ window.renderHOMEScreen = () => {
                 <div class="flex items-center space-x-2 text-yellow-400 mb-1">
                     ${Icons.Bolt}
                     <span class="font-bold">${Math.floor(player.energy)} / ${player.maxEnergy}</span>
-                    ${isFrozen ? `<span class="text-xs text-blue-400 ml-2">(Congelado)</span>` : ''}
+                    ${isFrozen ? `<span class="text-xs text-blue-400 ml-2">(Congelado)</span>` : isBurning ? `<span class="text-xs text-orange-400 ml-2">(Drenando)</span>` : ''}
                 </div>
                 <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden border-2 border-gray-600"><div class="bg-gradient-to-r from-yellow-500 to-amber-400 h-full rounded-full transition-all duration-300" style="width: ${energyPercentage}%"></div></div>
             </div>
@@ -433,7 +590,7 @@ window.renderFRIENDSScreen = () => {
     const container = getEl('screen-FRIENDS');
     const sortedPlayers = [...state.gameState.players].sort((a, b) => b.coins - a.coins);
     
-    // Verificar si el jugador actual está congelado
+    // Verificar si el jugador actual está congelado o drenando
     const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
     const chatDisabledClass = isFrozen ? 'opacity-50 pointer-events-none' : '';
 
@@ -446,6 +603,8 @@ window.renderFRIENDSScreen = () => {
                     const isHuman = p.id === state.humanPlayerId;
                     const rankChange = p.previousRank ? p.previousRank - rank : 0;
                     const isPlayerFrozen = p.isFrozenUntil && p.isFrozenUntil > Date.now();
+                    const isPlayerBurning = p.isBurningUntil && p.isBurningUntil > Date.now();
+                    
                     let rankIndicator = `<span class="text-gray-500 w-8 text-center">-</span>`;
                     if (rankChange > 0) rankIndicator = `<span class="text-green-400 flex items-center justify-center w-8">${Icons.ChevronUp.replace('w-6 h-6', 'w-4 h-4')} ${rankChange}</span>`;
                     else if (rankChange < 0) rankIndicator = `<span class="text-red-400 flex items-center justify-center w-8">${Icons.ChevronDown.replace('w-6 h-6', 'w-4 h-4')} ${Math.abs(rankChange)}</span>`;
@@ -458,6 +617,7 @@ window.renderFRIENDSScreen = () => {
                                     <p class="font-semibold truncate ${isHuman ? 'text-cyan-300' : 'text-white'}">${p.nickname} ${isHuman ? '(Tú)' : ''}</p>
                                     ${p.hasShield ? Icons.Shield : ''}
                                     ${isPlayerFrozen ? Icons.ZapOff : ''}
+                                    ${isPlayerBurning ? Icons.Flame : ''}
                                 </div>
                                 <p class="text-xs text-gray-400">Nivel ${p.level} - ${p.status}</p>
                             </div>
@@ -515,7 +675,11 @@ window.renderBOOSTSScreen = () => {
         const cost = boostDef.getCost(level);
         const icon = boostType === BoostType.MULTITAP ? `<div class="w-8 h-8 mr-3 text-cyan-400">${Icons.Send.replace('w-4 h-4', 'w-8 h-8')}</div>` : `<div class="w-8 h-8 mr-3 text-yellow-400">${Icons.Bolt.replace('w-5 h-5', 'w-8 h-8')}</div>`;
         
-        const isDisabled = isFrozen || player.coins < cost;
+        const isLoading = state.loadingAction === `boosts_${boostType}`;
+        const isDisabled = isFrozen || isLoading || player.coins < cost;
+        const buttonContent = isLoading 
+            ? `${Icons.Spinner} <span>Mejorando...</span>`
+            : `<span>Mejorar</span><span class="text-yellow-300">${Icons.Gem}</span><span>${cost.toLocaleString()}</span>`;
 
         return `
             <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700 ${isFrozen ? 'opacity-70' : ''}">
@@ -528,9 +692,7 @@ window.renderBOOSTSScreen = () => {
                 </div>
                 <p class="text-sm text-gray-400 mb-3">${boostDef.description(level)}</p>
                 <button data-boost-type="${boostType}" class="buy-boost-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${isDisabled ? 'disabled' : ''}>
-                    <span>Mejorar</span>
-                    <span class="text-yellow-300">${Icons.Gem}</span>
-                    <span>${cost.toLocaleString()}</span>
+                    ${buttonContent}
                 </button>
             </div>
         `;
@@ -562,12 +724,20 @@ window.renderCARDSScreen = () => {
                 <h3 class="font-orbitron text-xl text-center mb-2">Usar "${card.name}"</h3>
                 <p class="text-center text-sm text-gray-400 mb-4">Selecciona un objetivo:</p>
                 <div class="space-y-2">
-                    ${opponents.map(p => `
-                        <button data-target-id="${p.id}" class="use-card-button w-full text-left p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700" ${isFrozen ? 'disabled' : ''}>
-                            <p class="font-bold">${p.nickname}</p>
-                            <p class="text-xs text-gray-400">Nivel: ${p.level} | Monedas: ${p.coins.toLocaleString()}</p>
-                        </button>
-                    `).join('')}
+                    ${opponents.map(p => {
+                        const loadingKey = `use_card_${p.id}`;
+                        const isLoading = state.loadingAction === loadingKey;
+                        const isDisabled = isFrozen || isLoading;
+                        const buttonContent = isLoading 
+                            ? `${Icons.Spinner} <span>Usando...</span>`
+                            : `<p class="font-bold">${p.nickname}</p><p class="text-xs text-gray-400">Nivel: ${p.level} | Monedas: ${p.coins.toLocaleString()}</p>`;
+
+                        return `
+                            <button data-target-id="${p.id}" class="use-card-button w-full text-left p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700 flex justify-between items-center" ${isDisabled ? 'disabled' : ''}>
+                                ${buttonContent}
+                            </button>
+                        `;
+                    }).join('')}
                 </div>
             </div>
         `;
@@ -580,9 +750,14 @@ window.renderCARDSScreen = () => {
         const canUse = card.isSingleUse && cardCount > 0;
         const isPassiveAndOwned = !card.isSingleUse && cardCount > 0;
         
-        const canBuy = canAfford && !isPassiveAndOwned && !isFrozen;
+        const isLoading = state.loadingAction === `cards_${card.id}`;
+        const canBuy = canAfford && !isPassiveAndOwned && !isFrozen && !isLoading;
         const canUseNow = canUse && !isFrozen;
 
+        const buyButtonContent = isLoading
+            ? `${Icons.Spinner} <span>Comprando...</span>`
+            : `<span>${isPassiveAndOwned ? 'Comprado' : 'Comprar'}</span>
+               ${!isPassiveAndOwned ? `<span class="text-yellow-300">${Icons.Gem}</span><span>${card.cost.toLocaleString()}</span>` : ''}`;
 
         return `
             <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700 ${isFrozen ? 'opacity-70' : ''}">
@@ -590,8 +765,7 @@ window.renderCARDSScreen = () => {
                 <p class="text-sm text-gray-400 mb-3 h-10">${card.description}</p>
                 <div class="flex space-x-2">
                     <button data-card-type="${card.id}" class="buy-card-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${!canBuy ? 'disabled' : ''}>
-                        <span>${isPassiveAndOwned ? 'Comprado' : 'Comprar'}</span>
-                        ${!isPassiveAndOwned ? `<span class="text-yellow-300">${Icons.Gem}</span><span>${card.cost.toLocaleString()}</span>` : ''}
+                        ${buyButtonContent}
                     </button>
                     ${canUse ? `<button data-card-type-use="${card.id}" class="select-card-for-use-button w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-2 px-4 rounded-lg" ${!canUseNow ? 'disabled' : ''}>Usar</button>` : ''}
                 </div>
@@ -610,19 +784,20 @@ window.renderCARDSScreen = () => {
 
 // --- ACTION DISPATCHER & GAME LOGIC ---
 async function dispatch(type, payload) {
+    const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+    
+    // Simular regeneración de energía durante el FREEZE
+    if (type === 'TAP' && player && player.isFrozenUntil && player.isFrozenUntil > Date.now()) {
+        playSound(BLOCKED_SOUND); 
+        return;
+    }
+    
+    // Lógica para TAP (optimista, permite la animación de pérdida si está ardiendo)
     if (type === 'TAP') {
-        const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
-        // Verificar congelamiento antes de permitir el tap
         const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
 
-        if (isFrozen) {
-            // Si está congelado, reproducir el sonido de bloqueo y salir
-            // Esto es crucial para bloquear la lógica del TAP incluso si se llega aquí.
-            playSound(BLOCKED_SOUND); 
-            return;
-        }
-
-        if (player && player.energy > 0) {
+        if (player && player.energy > 0 && !isFrozen) {
+            // El drenaje por quemadura se maneja en el backend durante SYNC_TAPS o BACKGROUND_SYNC
             player.coins += player.boosts.MULTITAP;
             player.energy -= 1;
             state.pendingTaps += 1;
@@ -637,17 +812,15 @@ async function dispatch(type, payload) {
             // Optimistic UI update
             render(); 
         } else if (player && player.energy <= 0) {
-            // Si no tiene energía, reproducir el sonido original de falta de energía
             playSound(ENERGY_EMPTY_SOUND);
         }
         return;
     }
     
     // Para otras acciones (Boosts, Cards, Chat), verificar el congelamiento
-    const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
     const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
-    if (isFrozen && type !== 'SYNC_TAPS') {
-        // Bloqueamos cualquier acción no-TAP si está congelado.
+    if (isFrozen && type !== 'SYNC_TAPS' && type !== 'FREEZE_BAILOUT') {
+        // Bloqueamos cualquier acción no-TAP/SYNC/BAILOUT si está congelado.
         playSound(BLOCKED_SOUND);
         return;
     }
@@ -656,12 +829,22 @@ async function dispatch(type, payload) {
     await syncTaps();
 
     try {
-        updateState({ isLoading: true, error: null });
         const newState = await gameApi.dispatchAction(state.humanPlayerId, type, payload);
-        updateState({ gameState: newState, isLoading: false });
+        
+        // Simulación de FREEZE_BAILOUT
+        if (type === 'FREEZE_BAILOUT') {
+             // Esta simulación DEBE ser confirmada por el backend.
+             if (player.coins >= FREEZE_BAILOUT_COST) {
+                 player.coins -= FREEZE_BAILOUT_COST;
+                 player.isFrozenUntil = 0; // Terminar el castigo
+             } else {
+                 throw new Error("No tienes suficientes monedas para el rescate.");
+             }
+        }
+
+        updateState({ gameState: newState, error: null }); 
     } catch (e) {
-        updateState({ error: e.message, isLoading: false });
-        // Full reload on error to ensure consistency
+        updateState({ error: e.message, loadingAction: null });
         loadGameState(state.humanPlayerId);
     }
 }
@@ -698,11 +881,89 @@ async function loadGameState(playerId) {
     updateState({ isLoading: true, error: null });
     try {
         const initialState = await gameApi.getGameState(playerId);
+        
+        // ** SIMULACIÓN DE DATOS INICIALES (Requerida si el backend no proporciona todo) **
+        if (!initialState || !initialState.players || !initialState.messages) {
+             const baseState = initialState || {};
+             const simPlayerId = state.humanPlayerId || 'player-sim-001';
+             
+             // Simulación de estado de QUEMADURA (para probar el overlay)
+             // const burnUntil = Date.now() + FLAME_DURATION_MS;
+             // Simulación de estado de CONGELAMIENTO (para probar el overlay y el rescate)
+             // const freezeUntil = Date.now() + FREEZE_DURATION_MS;
+
+             baseState.players = baseState.players || [{
+                id: simPlayerId,
+                nickname: 'SimPlayer',
+                level: 1,
+                status: 'online',
+                coins: 50000,
+                dailyGain: 0,
+                maxDailyGain: 20,
+                energy: 500, // Menor a maxEnergy para simular regeneración
+                maxEnergy: 1000,
+                boosts: { MULTITAP: 5, ENERGY_LIMIT: 1 },
+                cards: [CardType.FREEZE, CardType.FLAME, CardType.SHIELD], // Dar cartas para probar
+                isFrozenUntil: 0, // Inicia sin congelar
+                isBurningUntil: 0, // Inicia sin quemar
+                hasShield: false,
+                isBot: false,
+                previousRank: 0,
+                lastOnline: Date.now(),
+             },
+             {
+                id: 'player-victim-002',
+                nickname: 'VictimBot',
+                level: 1,
+                status: 'online',
+                coins: 100000,
+                energy: 1000,
+                maxEnergy: 1000,
+                boosts: { MULTITAP: 1, ENERGY_LIMIT: 1 },
+                cards: [],
+                isFrozenUntil: 0,
+                isBurningUntil: 0, 
+                hasShield: false,
+                isBot: true,
+                previousRank: 1,
+                dailyGain: 0,
+                maxDailyGain: 20,
+                lastOnline: Date.now(),
+             }
+             ]; 
+             baseState.messages = baseState.messages || [];
+             
+             // Simulación de ArcaComun
+             baseState.arcaComun = baseState.arcaComun || 50000;
+             baseState.auction = baseState.auction || {
+                 id: 'daily_auction_20251016',
+                 period: 'Diario',
+                 endTime: Date.now() + (12 * 60 * 60 * 1000), // 12 horas desde el inicio
+                 potCoins: 45000,
+                 systemFee: 5000,
+                 currentHighestBid: 15000,
+                 highestBidderId: 'player-victim-002',
+             };
+             
+             initialState = baseState;
+        }
+
         updateState({ gameState: initialState, isLoading: false });
     } catch (e) {
         updateState({ error: e.message, isLoading: false });
     }
 }
+
+// Simulación de Regeneración de Energía
+function regenerateEnergy(player) {
+    if (!player) return;
+    const REGEN_RATE = 10; // Energía por segundo (simulación)
+    // Regenerar si la energía no está al máximo
+    if (player.energy < player.maxEnergy) {
+        player.energy = Math.min(player.maxEnergy, player.energy + (REGEN_RATE * (BACKGROUND_SYNC_INTERVAL_MS / 1000)));
+    }
+}
+
 
 function initGameSession() {
     if (state.humanPlayerId) {
@@ -710,7 +971,24 @@ function initGameSession() {
         if (state.backgroundSyncIntervalId) clearInterval(state.backgroundSyncIntervalId);
         state.backgroundSyncIntervalId = setInterval(() => {
             if (document.hidden) return;
-            gameApi.getGameState(state.humanPlayerId).then(gs => updateState({gameState: gs})).catch(console.warn);
+            
+            // Simulación de regeneración de energía en el cliente (para efectos visuales)
+            const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+            if (player) {
+                // Permitimos regeneración incluso si está congelado (Fairplay)
+                regenerateEnergy(player);
+            }
+            
+            gameApi.getGameState(state.humanPlayerId).then(gs => {
+                // Mantener simulación de jugadores si el backend no los envía
+                if (!gs.players && state.gameState?.players) {
+                     gs.players = state.gameState.players;
+                     gs.messages = state.gameState.messages;
+                     gs.arcaComun = state.gameState.arcaComun;
+                     gs.auction = state.gameState.auction;
+                }
+                updateState({gameState: gs})
+            }).catch(console.warn);
         }, BACKGROUND_SYNC_INTERVAL_MS);
     }
     render();
@@ -745,8 +1023,11 @@ function setupEventListeners() {
     // Nuevo listener en el overlay para el sonido de bloqueo al intentar interactuar
     const freezeOverlay = getEl('freeze-overlay');
     freezeOverlay.addEventListener('click', (e) => {
-        // Reproduce el sonido de bloqueo en cualquier tap sobre el overlay
-        playSound(BLOCKED_SOUND);
+        // Reproduce el sonido de bloqueo en cualquier tap sobre el overlay, 
+        // pero permitimos el clic en el botón de rescate (bailout button)
+        if (!e.target.closest('#freeze-bailout-button')) {
+            playSound(BLOCKED_SOUND);
+        }
     });
 
 
@@ -754,56 +1035,33 @@ function setupEventListeners() {
     const mainContent = document.querySelector('main');
     mainContent.addEventListener('click', async (e) => {
         const target = e.target;
-        const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+        const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
         const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
         
-        // CORRECCIÓN CRUCIAL: Si está congelado, y el clic no fue dentro del overlay
-        // pero sí dentro de mainContent (que es el contenedor de todas las pantallas),
-        // bloqueamos la acción y ejecutamos el sonido de bloqueo. 
-        if (isFrozen) {
-            // Si el clic fue en un elemento interactivo que no está ya deshabilitado (lo cual no debería pasar
-            // si la renderización es correcta), o si el clic fue en el contenedor de la pantalla HOME.
-            // Es mejor dejar que el overlay maneje el bloqueo si está visible.
-            // Si el clic es en un botón deshabilitado, el render ya lo maneja.
-            // La única excepción a la que debemos prestar atención es el TAP en el botón.
-            
-            // Si se pulsa un elemento en HOME o cualquier otra pantalla que está activa, y no es el overlay...
-            // Dado que el overlay está sobre main, el clic debería ser interceptado por el overlay.
-            // Dejaremos el manejo del bloqueo en el overlay y en el botón TAP.
-            // Si el botón TAP se activa, la lógica de dispatch lo bloquea.
-        }
-
-
         // Home screen tap
         const tapButton = target.closest('#tap-button');
         if (tapButton) {
-            // El dispatch('TAP') ahora maneja la lógica de congelamiento/energía/sonidos
-            // Re-chequeo para asegurar que la animación flotante no se muestre si está congelado o sin energía
-            
             if (!isFrozen && player && player.energy > 0) {
-                 // Si no está congelado y tiene energía, haz el tap con sonido y animación
-                playSound(TAP_SOUND);
-                const tapValue = player.boosts.MULTITAP;
-                dispatch('TAP', {});
+                 playSound(TAP_SOUND);
+                 const tapValue = player.boosts.MULTITAP;
+                 dispatch('TAP', {});
                 
-                /* --- IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
-                const plus = document.createElement("div");
-                plus.classList.add("floating-text");
-                plus.textContent = `+${tapValue}`; // Usamos el valor real del boost
+                 /* --- IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
+                 const plus = document.createElement("div");
+                 plus.classList.add("floating-text");
+                 plus.textContent = `+${tapValue}`; // Usamos el valor real del boost
 
-                // Posición donde hiciste click (coordenadas absolutas de la página)
-                plus.style.left = e.pageX + "px";
-                plus.style.top = e.pageY + "px";
+                 // Posición donde hiciste click (coordenadas absolutas de la página)
+                 plus.style.left = e.pageX + "px";
+                 plus.style.top = e.pageY + "px";
 
-                // Añadir al body
-                document.body.appendChild(plus);
+                 // Añadir al body
+                 document.body.appendChild(plus);
 
-                // Eliminar después de la animación
-                setTimeout(() => plus.remove(), 800); 
-                /* --- FIN IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
+                 // Eliminar después de la animación
+                 setTimeout(() => plus.remove(), 800); 
+                 /* --- FIN IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
             } else if (isFrozen) {
-                // Si está congelado, el dispatch ya reprodujo el BLOCKED_SOUND y evitó la lógica.
-                // Aseguramos que el sonido suene si el target es el botón deshabilitado.
                 playSound(BLOCKED_SOUND);
             } else {
                 // Si no tiene energía, el dispatch ya reprodujo el ENERGY_EMPTY_SOUND.
@@ -817,26 +1075,35 @@ function setupEventListeners() {
                  playSound(BLOCKED_SOUND);
                  return;
             }
-            // Alternar el estado isChatOpen y forzar un render
             updateState({ isChatOpen: !state.isChatOpen });
             return;
         }
         
-        // Boosts screen
+        // Boosts screen: Clic en "Mejorar"
         const buyBoostButton = target.closest('.buy-boost-button');
         if (buyBoostButton && !buyBoostButton.disabled) {
-            buyBoostButton.innerHTML = `${Icons.Spinner} <span>Mejorando...</span>`;
-            buyBoostButton.disabled = true;
-            await dispatch('BUY_BOOST', { boostType: buyBoostButton.dataset.boostType });
+            const boostType = buyBoostButton.dataset.boostType;
+            updateState({ loadingAction: `boosts_${boostType}` });
+            
+            try {
+                await dispatch('BUY_BOOST', { boostType: boostType });
+            } catch (error) {
+                // El catch en dispatch ya limpia loadingAction.
+            }
             return;
         }
 
         // Cards screen: Clic en "Comprar"
         const buyCardButton = target.closest('.buy-card-button');
         if (buyCardButton && !buyCardButton.disabled) {
-            buyCardButton.innerHTML = `${Icons.Spinner} <span>Comprando...</span>`;
-            buyCardButton.disabled = true;
-            await dispatch('BUY_CARD', { cardType: buyCardButton.dataset.cardType });
+            const cardType = buyCardButton.dataset.cardType;
+            updateState({ loadingAction: `cards_${cardType}` });
+            
+            try {
+                await dispatch('BUY_CARD', { cardType: cardType });
+            } catch (error) {
+                // El catch en dispatch ya limpia loadingAction.
+            }
             return;
         }
 
@@ -856,25 +1123,21 @@ function setupEventListeners() {
         // Cards screen: Clic en Oponente (Uso final de la carta)
         const useCardButton = target.closest('.use-card-button');
         if (useCardButton && !useCardButton.disabled) {
-            
-            // 1. Deshabilitar UI inmediatamente
-            document.querySelectorAll('.use-card-button').forEach(b => b.disabled = true);
-            useCardButton.innerHTML = `${Icons.Spinner} <span>Usando...</span>`;
+            const targetId = useCardButton.dataset.targetId;
+            const loadingKey = `use_card_${targetId}`;
+
+            updateState({ loadingAction: loadingKey });
 
             try {
-                // 2. Despachar la acción al backend (Esto incluye syncTaps)
                 await dispatch('USE_CARD', { 
                     cardType: state.selectedCardForUse, 
-                    targetId: useCardButton.dataset.targetId 
+                    targetId: targetId
                 });
                 
             } catch (error) {
-                 // 3. Manejo de errores
                 console.error("Error al usar la carta:", error);
-                // Si falla, el dispatch ya maneja la actualización del estado de error y la recarga.
             } finally {
-                // 4. Limpiar el estado de selección, el render se encargará del resto.
-                updateState({ selectedCardForUse: null });
+                updateState({ selectedCardForUse: null }); 
             }
             return;
         }
@@ -882,16 +1145,15 @@ function setupEventListeners() {
     });
     
     // Form submissions
-    mainContent.addEventListener('submit', (e) => {
+    mainContent.addEventListener('submit', async (e) => {
         if (e.target.id === 'chat-form') {
             e.preventDefault();
             const input = getEl('chat-input');
             const text = input.value.trim();
-            const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+            const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
             const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
             
             if (isFrozen) {
-                // Bloquear envío de chat si está congelado
                 playSound(BLOCKED_SOUND);
                 return;
             }
@@ -899,6 +1161,50 @@ function setupEventListeners() {
             if(text) {
                 dispatch('SEND_MESSAGE', { text });
                 input.value = '';
+            }
+        }
+        
+        if (e.target.id === 'auction-bid-form') {
+            e.preventDefault();
+            const bidInput = getEl('bid-input');
+            const bidErrorEl = getEl('bid-error');
+            const bidAmount = parseInt(bidInput.value, 10);
+            
+            // Ocultar errores previos
+            bidErrorEl.classList.add('hidden');
+            
+            const player = state.gameState?.players?.find(p => p.id === state.humanPlayerId);
+            const auction = state.gameState?.auction;
+
+            // Verificación para evitar fallos si el estado no está cargado.
+            if (!player || !auction) return;
+            
+            const minBid = auction.currentHighestBid + 100;
+            
+            if (bidAmount < minBid) {
+                bidErrorEl.textContent = `La puja debe ser al menos ${minBid.toLocaleString()} monedas.`;
+                bidErrorEl.classList.remove('hidden');
+                return;
+            }
+            if (bidAmount > player.coins) {
+                 bidErrorEl.textContent = `No tienes suficientes monedas para esta puja.`;
+                bidErrorEl.classList.remove('hidden');
+                return;
+            }
+
+            // 1. Mostrar Loader
+            updateState({ loadingAction: 'bid_auction' });
+            
+            try {
+                // 2. Despachar la acción de puja
+                await dispatch('BID_AUCTION', { 
+                    auctionId: auction.id, 
+                    bidAmount: bidAmount 
+                });
+            } catch (e) {
+                // El error ya se maneja en dispatch
+            } finally {
+                // El render final limpia el loader
             }
         }
     });
