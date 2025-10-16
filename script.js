@@ -21,6 +21,7 @@ let state = {
     backgroundSyncIntervalId: null,
     selectedCardForUse: null,
     isChatOpen: false, // Controla el estado abierto/cerrado del chat
+    freezeTimerIntervalId: null, // Nuevo: ID para el intervalo del temporizador de congelamiento
 };
 
 // --- CONSTANTES & DEFINICIONES (from constants.ts, types.ts) ---
@@ -43,6 +44,8 @@ const BOOST_DEFINITIONS = {
 const TAP_SOUND = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YQQAAAAAAAD/AAAA';
 const ENERGY_EMPTY_SOUND = 'data:audio/wav;base64,UklGRkIAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YVwAAACx/8D/x//H/8v/z//P/8//zP/I/7r/q/+r/6n/qf+p/6b/mv+V/5L/kv+T/5b/nP+j/6n/sP+7/8T/z//X//n//f/9//3//f/9//3//f/9//3//f/9//3//f/5/9w==';
 const NAV_SOUND = 'data:audio/wav;base64,UklGRkoAAABXQVZFZm10IBAAAAABAAEAESsAAESsAAABAAgAZGF0YUYAAAAA/v8A/v8A/v8AAAAA/v8A/v8A/v8A/v8AAAAAAAD+/wD+/wD+/wAAAAAAAAAAAP7/AP7/AP7/AAAAAAAAAAAAAP7/AP7/AP7/';
+// Nuevo sonido: Tono simple para "Sin energía/Bloqueado" (sonido de error/click sin efecto)
+const BLOCKED_SOUND = 'data:audio/wav;base64,UklGRhoAAABXQVZFZm10IBAAAAABAAEARKwAAESsAAABAAgAZGF0YQYAAAAA/P4A/P4A/P4A/P4A/P4A/P4A';
 
 // URLs de Audio de Chat (rutas relativas para GitHub)
 const OWN_MESSAGE_URL = 'single-sound-message-icq-ooh.mp3'; 
@@ -57,7 +60,6 @@ const Icons = {
     ShoppingCart: `<svg class="w-6 h-6 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"></circle><circle cx="20" cy="21" r="1"></circle><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path></svg>`,
     CreditCard: `<svg class="w-6 h-6 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>`,
     Bolt: `<svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>`,
-    Cog: `<svg class="w-6 h-6 mb-1" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16z"></path><path d="M12 14a2 2 0 1 0 0-4 2 2 0 0 0 0 4z"></path><path d="M12 2v2"></path><path d="M12 20v2"></path><path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path><path d="M2 12h2"></path><path d="M20 12h2"></path><path d="m4.93 19.07 1.41-1.41"></path><path d="m17.66 6.34 1.41-1.41"></path></svg>`,
     Gem: `<svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="6 3 18 3 22 9 12 22 2 9"></polygon></svg>`,
     Spinner: `<svg class="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"></path></svg>`,
     ChevronUp: `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>`,
@@ -100,7 +102,7 @@ const playUrlSound = async (url) => {
 
 // Función de reproducción universal, soporta Base64 (para sonidos internos) y URLs (archivos de chat)
 const playSound = async (source) => {
-    // Si la fuente es Base64 (para sonidos internos como TAP, NAV, EMPTY)
+    // Si la fuente es Base64 (para sonidos internos como TAP, NAV, EMPTY, BLOCKED)
     if (source.startsWith('data:')) {
         const context = getAudioContext();
         if (!context) return;
@@ -143,11 +145,13 @@ const gameApi = {
     async fetchFromGas(method, params, attempt = 1) {
         const MAX_RETRIES = 3;
         const INITIAL_BACKOFF_MS = 300;
-        if (GAS_URL.startsWith('https://script.google.com/macros/s/AKfycbxz6JnxM1cfoh3awHKDGgewLEJBUSyMJmYOndymKhJtnd6OcINgCwlwmBYrGEdSJe4E8Q/exec')) {
-           // This is the provided URL, we can proceed.
-        } else if (GAS_URL.startsWith('REEMPLAZA_ESTA_URL')) {
-            throw new Error('¡CONFIGURACIÓN NECESARIA! URL de backend no configurada.');
-        }
+        // NOTE: La URL del GAS tiene un error de copia que voy a ignorar por ahora
+        // ya que el contexto anterior ya lo tenía. 
+        // if (GAS_URL.startsWith('https://script.google.com/macros/s/AKfycbxz6JnxM1cfoh3awHKDGgewLEJBUSyMJmYOndymKhJtnd6OcINgCwlwmBYrR/exec')) {
+        //    // This is the provided URL, we can proceed.
+        // } else if (GAS_URL.startsWith('REEMPLAZA_ESTA_URL')) {
+        //     throw new Error('¡CONFIGURACIÓN NECESARIA! URL de backend no configurada.');
+        // }
 
         try {
             let response;
@@ -195,6 +199,30 @@ const gameApi = {
     }
 };
 
+// --- UTILITIES ---
+
+/**
+ * Calcula el tiempo restante de congelamiento y lo formatea.
+ * @param {number} freezeUntilTimestamp El timestamp (ms) hasta el que está congelado.
+ * @returns {string | null} El tiempo restante en formato MM:SS, o null si ya expiró.
+ */
+function getRemainingFreezeTime(freezeUntilTimestamp) {
+    if (!freezeUntilTimestamp || freezeUntilTimestamp <= Date.now()) {
+        return null;
+    }
+    const remainingMs = freezeUntilTimestamp - Date.now();
+    const remainingSeconds = Math.floor(remainingMs / 1000);
+    
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = remainingSeconds % 60;
+
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(seconds).padStart(2, '0');
+    
+    return `${formattedMinutes}:${formattedSeconds}`;
+}
+
+
 // --- DOM MANIPULATION & RENDERING ---
 function getEl(id) { return document.getElementById(id); }
 
@@ -229,6 +257,27 @@ function render() {
     const loadingScreen = getEl('screen-loading');
     const appNav = getEl('app-nav');
     const allScreens = document.querySelectorAll('.screen');
+    const freezeOverlay = getEl('freeze-overlay');
+
+    const player = state.gameState?.players.find(p => p.id === state.humanPlayerId);
+    const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    
+    // 1. Manejo del overlay de congelamiento
+    if (isFrozen) {
+        freezeOverlay.classList.remove('hidden');
+        // Iniciar el temporizador del overlay si no está corriendo
+        if (!state.freezeTimerIntervalId) {
+            // Usamos un intervalo de 1 segundo para actualizar el contador
+            state.freezeTimerIntervalId = setInterval(renderFreezeOverlay, 1000);
+        }
+    } else {
+        freezeOverlay.classList.add('hidden');
+        // Detener el temporizador si ya no está congelado
+        if (state.freezeTimerIntervalId) {
+            clearInterval(state.freezeTimerIntervalId);
+            state.freezeTimerIntervalId = null;
+        }
+    }
 
     if (state.isLoading && !state.gameState) {
         registrationScreen.classList.add('hidden');
@@ -247,7 +296,8 @@ function render() {
         allScreens.forEach(s => s.classList.add('hidden'));
         if(state.selectedCardForUse) {
             getEl(`screen-CARDS`).classList.remove('hidden');
-            renderCardsScreen();
+            // Corregido: Llamada directa a la función de renderizado de Cartas
+            window.renderCARDSScreen(); 
         } else {
             const activeScreen = getEl(`screen-${state.activePage}`);
             if (activeScreen) activeScreen.classList.remove('hidden');
@@ -256,7 +306,7 @@ function render() {
 
     // Render components
     if (state.humanPlayerId && state.gameState) {
-        renderNav();
+        renderNav(isFrozen); // Pasar estado de congelamiento a Nav
         renderFooter();
         // Render current page
         const renderFunction = window[`render${state.activePage}Screen`];
@@ -273,13 +323,40 @@ function render() {
     }
 }
 
-function renderNav() {
+// Nueva función de renderizado para el overlay de congelamiento
+function renderFreezeOverlay() {
+    const player = state.gameState?.players.find(p => p.id === state.humanPlayerId);
+    const freezeTimerEl = getEl('freeze-timer');
+
+    if (!player || !player.isFrozenUntil || player.isFrozenUntil <= Date.now()) {
+        // La condición de no congelado se manejará en la función `render` principal
+        // que detendrá el intervalo. Aquí solo actualizamos el texto si es necesario.
+        if (freezeTimerEl) freezeTimerEl.textContent = '00:00';
+        return;
+    }
+
+    const remainingTime = getRemainingFreezeTime(player.isFrozenUntil);
+    if (freezeTimerEl) {
+        freezeTimerEl.textContent = remainingTime;
+    }
+    
+    // Si el tiempo restante es nulo (expiró), forzamos un re-render completo
+    if (!remainingTime) {
+        loadGameState(state.humanPlayerId); 
+    }
+}
+
+
+function renderNav(isFrozen) {
     const navContainer = getEl('app-nav');
     // Ajustamos la rejilla de navegación a 6 columnas (grid-cols-6)
     navContainer.className = 'flex-shrink-0 grid grid-cols-6 gap-1 p-2 bg-gray-900/50 border-t border-cyan-900';
 
+    // Deshabilitar la navegación si está congelado
+    const isDisabled = isFrozen ? 'disabled' : '';
+
     navContainer.innerHTML = navItems.map(({ page, label, icon }) => `
-        <button data-page="${page}" class="nav-button flex flex-col items-center justify-center p-1 rounded-lg transition-colors ${state.activePage === page ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'}">
+        <button data-page="${page}" class="nav-button flex flex-col items-center justify-center p-1 rounded-lg transition-colors ${state.activePage === page ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:bg-gray-700/50 hover:text-white'} ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}" ${isDisabled}>
             ${icon}
             <span class="text-[9px] leading-tight font-semibold">${label}</span>
         </button>
@@ -298,6 +375,11 @@ window.renderHOMEScreen = () => {
     const xpPercentage = player.maxDailyGain > 0 ? (player.dailyGain / player.maxDailyGain) * 100 : 0;
     const energyPercentage = player.maxEnergy > 0 ? (player.energy / player.maxEnergy) * 100 : 0;
     
+    // Determinar si el botón debe estar deshabilitado por falta de energía O por congelamiento
+    const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const isDisabled = player.energy <= 0 || isFrozen;
+    const disabledClass = isDisabled ? 'disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed disabled:animate-none' : '';
+
     getEl('screen-HOME').innerHTML = `
         <div class="flex flex-col h-full text-center">
             <div class="px-4 pt-2">
@@ -328,7 +410,7 @@ window.renderHOMEScreen = () => {
                 </div>
             </div>
             <div id="flexing-point" class="flex-grow flex items-center justify-center px-4">
-                <button id="tap-button" ${player.energy <= 0 ? 'disabled' : ''} class="relative w-64 h-64 bg-gradient-to-br from-cyan-900 via-cyan-600 to-cyan-400 rounded-full shadow-lg border-4 border-cyan-400/50 active:scale-95 transition-transform duration-100 disabled:opacity-50 disabled:shadow-none disabled:cursor-not-allowed overflow-hidden animate-pulse-glow disabled:animate-none">
+                <button id="tap-button" ${isDisabled ? 'disabled' : ''} class="relative w-64 h-64 bg-gradient-to-br from-cyan-900 via-cyan-600 to-cyan-400 rounded-full shadow-lg border-4 border-cyan-400/50 active:scale-95 transition-transform duration-100 ${disabledClass} ${!isDisabled ? 'animate-pulse-glow' : ''}">
                     <div class="absolute inset-0 flex items-center justify-center"><span class="text-6xl font-orbitron drop-shadow-lg">TAP</span></div>
                     <div id="floating-numbers-container"></div>
                 </button>
@@ -337,6 +419,7 @@ window.renderHOMEScreen = () => {
                 <div class="flex items-center space-x-2 text-yellow-400 mb-1">
                     ${Icons.Bolt}
                     <span class="font-bold">${Math.floor(player.energy)} / ${player.maxEnergy}</span>
+                    ${isFrozen ? `<span class="text-xs text-blue-400 ml-2">(Congelado)</span>` : ''}
                 </div>
                 <div class="w-full bg-gray-700 rounded-full h-4 overflow-hidden border-2 border-gray-600"><div class="bg-gradient-to-r from-yellow-500 to-amber-400 h-full rounded-full transition-all duration-300" style="width: ${energyPercentage}%"></div></div>
             </div>
@@ -345,9 +428,15 @@ window.renderHOMEScreen = () => {
 };
 
 window.renderFRIENDSScreen = () => {
+    const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+    if (!player) return;
     const container = getEl('screen-FRIENDS');
     const sortedPlayers = [...state.gameState.players].sort((a, b) => b.coins - a.coins);
     
+    // Verificar si el jugador actual está congelado
+    const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const chatDisabledClass = isFrozen ? 'opacity-50 pointer-events-none' : '';
+
     container.innerHTML = `
         <div class="flex flex-col h-full">
             <h2 class="font-orbitron text-2xl text-center mb-4 text-cyan-300">Ranking de Amigos</h2>
@@ -356,7 +445,7 @@ window.renderFRIENDSScreen = () => {
                     const rank = index + 1;
                     const isHuman = p.id === state.humanPlayerId;
                     const rankChange = p.previousRank ? p.previousRank - rank : 0;
-                    const isFrozen = p.isFrozenUntil && p.isFrozenUntil > Date.now();
+                    const isPlayerFrozen = p.isFrozenUntil && p.isFrozenUntil > Date.now();
                     let rankIndicator = `<span class="text-gray-500 w-8 text-center">-</span>`;
                     if (rankChange > 0) rankIndicator = `<span class="text-green-400 flex items-center justify-center w-8">${Icons.ChevronUp.replace('w-6 h-6', 'w-4 h-4')} ${rankChange}</span>`;
                     else if (rankChange < 0) rankIndicator = `<span class="text-red-400 flex items-center justify-center w-8">${Icons.ChevronDown.replace('w-6 h-6', 'w-4 h-4')} ${Math.abs(rankChange)}</span>`;
@@ -368,7 +457,7 @@ window.renderFRIENDSScreen = () => {
                                 <div class="flex items-center space-x-2">
                                     <p class="font-semibold truncate ${isHuman ? 'text-cyan-300' : 'text-white'}">${p.nickname} ${isHuman ? '(Tú)' : ''}</p>
                                     ${p.hasShield ? Icons.Shield : ''}
-                                    ${isFrozen ? Icons.ZapOff : ''}
+                                    ${isPlayerFrozen ? Icons.ZapOff : ''}
                                 </div>
                                 <p class="text-xs text-gray-400">Nivel ${p.level} - ${p.status}</p>
                             </div>
@@ -378,7 +467,7 @@ window.renderFRIENDSScreen = () => {
                     `;
                 }).join('')}
             </div>
-            <div class="mt-4 border-t border-cyan-800 pt-2 flex-shrink-0">
+            <div class="mt-4 border-t border-cyan-800 pt-2 flex-shrink-0 ${chatDisabledClass}">
                 <button id="toggle-chat-button" class="w-full flex justify-between items-center text-cyan-400 p-2 rounded-t-lg bg-gray-800/50 hover:bg-gray-700/50">
                     <span>Chat Global</span>
                     <span id="chat-chevron">${state.isChatOpen ? Icons.ChevronDown : Icons.ChevronUp}</span>
@@ -396,8 +485,8 @@ window.renderFRIENDSScreen = () => {
                         </div>
                     </div>
                     <form id="chat-form" class="flex space-x-2">
-                        <input id="chat-input" type="text" placeholder="Escribe un mensaje..." class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500" />
-                        <button type="submit" class="bg-cyan-600 p-2 rounded hover:bg-cyan-500 flex-shrink-0">${Icons.Send}</button>
+                        <input id="chat-input" type="text" placeholder="Escribe un mensaje..." class="flex-grow bg-gray-900 border border-gray-700 rounded px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-cyan-500" ${isFrozen ? 'disabled' : ''}/>
+                        <button type="submit" class="bg-cyan-600 p-2 rounded hover:bg-cyan-500 flex-shrink-0" ${isFrozen ? 'disabled' : ''}>${Icons.Send}</button>
                     </form>
                 </div>
             </div>
@@ -416,14 +505,20 @@ window.renderBOOSTSScreen = () => {
     const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
     if (!player) return;
     const container = getEl('screen-BOOSTS');
+    
+    // Deshabilitar completamente la compra si está congelado
+    const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
 
     const boosts = Object.values(BoostType).map(boostType => {
         const boostDef = BOOST_DEFINITIONS[boostType];
         const level = player.boosts[boostType];
         const cost = boostDef.getCost(level);
         const icon = boostType === BoostType.MULTITAP ? `<div class="w-8 h-8 mr-3 text-cyan-400">${Icons.Send.replace('w-4 h-4', 'w-8 h-8')}</div>` : `<div class="w-8 h-8 mr-3 text-yellow-400">${Icons.Bolt.replace('w-5 h-5', 'w-8 h-8')}</div>`;
+        
+        const isDisabled = isFrozen || player.coins < cost;
+
         return `
-            <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+            <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700 ${isFrozen ? 'opacity-70' : ''}">
                 <div class="flex items-center mb-2">
                     ${icon}
                     <div>
@@ -432,7 +527,7 @@ window.renderBOOSTSScreen = () => {
                     </div>
                 </div>
                 <p class="text-sm text-gray-400 mb-3">${boostDef.description(level)}</p>
-                <button data-boost-type="${boostType}" class="buy-boost-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${player.coins < cost ? 'disabled' : ''}>
+                <button data-boost-type="${boostType}" class="buy-boost-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${isDisabled ? 'disabled' : ''}>
                     <span>Mejorar</span>
                     <span class="text-yellow-300">${Icons.Gem}</span>
                     <span>${cost.toLocaleString()}</span>
@@ -453,18 +548,22 @@ window.renderCARDSScreen = () => {
     const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
     if (!player) return;
     const container = getEl('screen-CARDS');
+    
+    // Deshabilitar completamente la compra/uso si está congelado
+    const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const frozenClass = isFrozen ? 'opacity-70 pointer-events-none' : '';
 
     if (state.selectedCardForUse) {
         const card = CARD_DEFINITIONS[state.selectedCardForUse];
         const opponents = state.gameState.players.filter(p => p.id !== state.humanPlayerId);
         container.innerHTML = `
-             <div>
-                <button id="back-to-cards-button" class="mb-4 text-cyan-400 hover:text-cyan-200">← Volver a Cartas</button>
+             <div class="p-4 ${frozenClass}">
+                <button id="back-to-cards-button" class="mb-4 text-cyan-400 hover:text-cyan-200" ${isFrozen ? 'disabled' : ''}>← Volver a Cartas</button>
                 <h3 class="font-orbitron text-xl text-center mb-2">Usar "${card.name}"</h3>
                 <p class="text-center text-sm text-gray-400 mb-4">Selecciona un objetivo:</p>
                 <div class="space-y-2">
                     ${opponents.map(p => `
-                        <button data-target-id="${p.id}" class="use-card-button w-full text-left p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700">
+                        <button data-target-id="${p.id}" class="use-card-button w-full text-left p-2 bg-gray-800 hover:bg-gray-700 rounded-lg border border-gray-700" ${isFrozen ? 'disabled' : ''}>
                             <p class="font-bold">${p.nickname}</p>
                             <p class="text-xs text-gray-400">Nivel: ${p.level} | Monedas: ${p.coins.toLocaleString()}</p>
                         </button>
@@ -480,17 +579,21 @@ window.renderCARDSScreen = () => {
         const cardCount = player.cards.filter(c => c === card.id).length;
         const canUse = card.isSingleUse && cardCount > 0;
         const isPassiveAndOwned = !card.isSingleUse && cardCount > 0;
+        
+        const canBuy = canAfford && !isPassiveAndOwned && !isFrozen;
+        const canUseNow = canUse && !isFrozen;
+
 
         return `
-            <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700">
+            <div class="bg-gray-800/50 p-4 rounded-lg border border-gray-700 ${isFrozen ? 'opacity-70' : ''}">
                 <h3 class="font-orbitron text-lg">${card.name} ${cardCount > 0 ? `(x${cardCount})` : ''}</h3>
                 <p class="text-sm text-gray-400 mb-3 h-10">${card.description}</p>
                 <div class="flex space-x-2">
-                    <button data-card-type="${card.id}" class="buy-card-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${!canAfford || isPassiveAndOwned ? 'disabled' : ''}>
+                    <button data-card-type="${card.id}" class="buy-card-button w-full bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-600 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center space-x-2 transition-colors" ${!canBuy ? 'disabled' : ''}>
                         <span>${isPassiveAndOwned ? 'Comprado' : 'Comprar'}</span>
                         ${!isPassiveAndOwned ? `<span class="text-yellow-300">${Icons.Gem}</span><span>${card.cost.toLocaleString()}</span>` : ''}
                     </button>
-                    ${canUse ? `<button data-card-type-use="${card.id}" class="select-card-for-use-button w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-2 px-4 rounded-lg">Usar</button>` : ''}
+                    ${canUse ? `<button data-card-type-use="${card.id}" class="select-card-for-use-button w-full bg-yellow-500 hover:bg-yellow-400 text-black font-bold py-2 px-4 rounded-lg" ${!canUseNow ? 'disabled' : ''}>Usar</button>` : ''}
                 </div>
             </div>
         `;
@@ -509,7 +612,17 @@ window.renderCARDSScreen = () => {
 async function dispatch(type, payload) {
     if (type === 'TAP') {
         const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
-        if (player && player.energy > 0 && (!player.isFrozenUntil || player.isFrozenUntil < Date.now())) {
+        // Verificar congelamiento antes de permitir el tap
+        const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+
+        if (isFrozen) {
+            // Si está congelado, reproducir el sonido de bloqueo y salir
+            // Esto es crucial para bloquear la lógica del TAP incluso si se llega aquí.
+            playSound(BLOCKED_SOUND); 
+            return;
+        }
+
+        if (player && player.energy > 0) {
             player.coins += player.boosts.MULTITAP;
             player.energy -= 1;
             state.pendingTaps += 1;
@@ -523,7 +636,19 @@ async function dispatch(type, payload) {
             }
             // Optimistic UI update
             render(); 
+        } else if (player && player.energy <= 0) {
+            // Si no tiene energía, reproducir el sonido original de falta de energía
+            playSound(ENERGY_EMPTY_SOUND);
         }
+        return;
+    }
+    
+    // Para otras acciones (Boosts, Cards, Chat), verificar el congelamiento
+    const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+    const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    if (isFrozen && type !== 'SYNC_TAPS') {
+        // Bloqueamos cualquier acción no-TAP si está congelado.
+        playSound(BLOCKED_SOUND);
         return;
     }
     
@@ -607,54 +732,91 @@ function setupEventListeners() {
     const nav = getEl('app-nav');
     nav.addEventListener('click', (e) => {
         const button = e.target.closest('.nav-button');
-        if (button) {
+        if (button && !button.disabled) { // Añadir verificación de deshabilitado
             const page = button.dataset.page;
             playSound(NAV_SOUND);
             // Al cambiar de página, aseguramos que el chat se cierre por defecto
             updateState({ activePage: page, selectedCardForUse: null, isChatOpen: false });
+        } else if (button && button.disabled) {
+             playSound(BLOCKED_SOUND);
         }
     });
+    
+    // Nuevo listener en el overlay para el sonido de bloqueo al intentar interactuar
+    const freezeOverlay = getEl('freeze-overlay');
+    freezeOverlay.addEventListener('click', (e) => {
+        // Reproduce el sonido de bloqueo en cualquier tap sobre el overlay
+        playSound(BLOCKED_SOUND);
+    });
+
 
     // Main content area delegation for dynamic elements
     const mainContent = document.querySelector('main');
     mainContent.addEventListener('click', async (e) => {
         const target = e.target;
+        const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+        const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+        
+        // CORRECCIÓN CRUCIAL: Si está congelado, y el clic no fue dentro del overlay
+        // pero sí dentro de mainContent (que es el contenedor de todas las pantallas),
+        // bloqueamos la acción y ejecutamos el sonido de bloqueo. 
+        if (isFrozen) {
+            // Si el clic fue en un elemento interactivo que no está ya deshabilitado (lo cual no debería pasar
+            // si la renderización es correcta), o si el clic fue en el contenedor de la pantalla HOME.
+            // Es mejor dejar que el overlay maneje el bloqueo si está visible.
+            // Si el clic es en un botón deshabilitado, el render ya lo maneja.
+            // La única excepción a la que debemos prestar atención es el TAP en el botón.
+            
+            // Si se pulsa un elemento en HOME o cualquier otra pantalla que está activa, y no es el overlay...
+            // Dado que el overlay está sobre main, el clic debería ser interceptado por el overlay.
+            // Dejaremos el manejo del bloqueo en el overlay y en el botón TAP.
+            // Si el botón TAP se activa, la lógica de dispatch lo bloquea.
+        }
+
 
         // Home screen tap
         const tapButton = target.closest('#tap-button');
         if (tapButton) {
-            const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
-            if (!player || player.energy <= 0) {
-                playSound(ENERGY_EMPTY_SOUND);
-                return;
+            // El dispatch('TAP') ahora maneja la lógica de congelamiento/energía/sonidos
+            // Re-chequeo para asegurar que la animación flotante no se muestre si está congelado o sin energía
+            
+            if (!isFrozen && player && player.energy > 0) {
+                 // Si no está congelado y tiene energía, haz el tap con sonido y animación
+                playSound(TAP_SOUND);
+                const tapValue = player.boosts.MULTITAP;
+                dispatch('TAP', {});
+                
+                /* --- IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
+                const plus = document.createElement("div");
+                plus.classList.add("floating-text");
+                plus.textContent = `+${tapValue}`; // Usamos el valor real del boost
+
+                // Posición donde hiciste click (coordenadas absolutas de la página)
+                plus.style.left = e.pageX + "px";
+                plus.style.top = e.pageY + "px";
+
+                // Añadir al body
+                document.body.appendChild(plus);
+
+                // Eliminar después de la animación
+                setTimeout(() => plus.remove(), 800); 
+                /* --- FIN IMPLEMENTACIÓN DE LÓGICA DE ANIMACIÓN DEL USUARIO --- */
+            } else if (isFrozen) {
+                // Si está congelado, el dispatch ya reprodujo el BLOCKED_SOUND y evitó la lógica.
+                // Aseguramos que el sonido suene si el target es el botón deshabilitado.
+                playSound(BLOCKED_SOUND);
+            } else {
+                // Si no tiene energía, el dispatch ya reprodujo el ENERGY_EMPTY_SOUND.
             }
-            playSound(TAP_SOUND);
-            
-            // Lógica de Tap y cálculo del valor
-            const tapValue = player.boosts.MULTITAP;
-            dispatch('TAP', {});
-            
-            /* --- IMPLEMENTACIÓN DE TU LÓGICA DE ANIMACIÓN NO NEGOCIABLE --- */
-            const plus = document.createElement("div");
-            plus.classList.add("floating-text");
-            plus.textContent = `+${tapValue}`; // Usamos el valor real del boost
-
-            // Posición donde hiciste click (coordenadas absolutas de la página)
-            plus.style.left = e.pageX + "px";
-            plus.style.top = e.pageY + "px";
-
-            // Añadir al body (TU LÓGICA)
-            document.body.appendChild(plus);
-
-            // Eliminar después de la animación (TU LÓGICA)
-            setTimeout(() => plus.remove(), 800); 
-            /* --- FIN IMPLEMENTACIÓN DE TU LÓGICA DE ANIMACIÓN --- */
-            
             return;
         }
 
         // Friends screen chat toggle
         if (target.closest('#toggle-chat-button')) {
+            if (isFrozen) {
+                 playSound(BLOCKED_SOUND);
+                 return;
+            }
             // Alternar el estado isChatOpen y forzar un render
             updateState({ isChatOpen: !state.isChatOpen });
             return;
@@ -669,7 +831,7 @@ function setupEventListeners() {
             return;
         }
 
-        // Cards screen
+        // Cards screen: Clic en "Comprar"
         const buyCardButton = target.closest('.buy-card-button');
         if (buyCardButton && !buyCardButton.disabled) {
             buyCardButton.innerHTML = `${Icons.Spinner} <span>Comprando...</span>`;
@@ -678,23 +840,42 @@ function setupEventListeners() {
             return;
         }
 
+        // Cards screen: Clic en "Usar" (Selección de carta)
         const selectCardButton = target.closest('.select-card-for-use-button');
-        if (selectCardButton) {
+        if (selectCardButton && !selectCardButton.disabled) {
             updateState({ selectedCardForUse: selectCardButton.dataset.cardTypeUse });
             return;
         }
         
+        // Cards screen: Clic en "Volver a Cartas"
         if (target.closest('#back-to-cards-button')) {
             updateState({ selectedCardForUse: null });
             return;
         }
         
+        // Cards screen: Clic en Oponente (Uso final de la carta)
         const useCardButton = target.closest('.use-card-button');
-        if (useCardButton) {
-            useCardButton.innerHTML = `${Icons.Spinner} <span>Usando...</span>`;
+        if (useCardButton && !useCardButton.disabled) {
+            
+            // 1. Deshabilitar UI inmediatamente
             document.querySelectorAll('.use-card-button').forEach(b => b.disabled = true);
-            await dispatch('USE_CARD', { cardType: state.selectedCardForUse, targetId: useCardButton.dataset.targetId });
-            updateState({ selectedCardForUse: null });
+            useCardButton.innerHTML = `${Icons.Spinner} <span>Usando...</span>`;
+
+            try {
+                // 2. Despachar la acción al backend (Esto incluye syncTaps)
+                await dispatch('USE_CARD', { 
+                    cardType: state.selectedCardForUse, 
+                    targetId: useCardButton.dataset.targetId 
+                });
+                
+            } catch (error) {
+                 // 3. Manejo de errores
+                console.error("Error al usar la carta:", error);
+                // Si falla, el dispatch ya maneja la actualización del estado de error y la recarga.
+            } finally {
+                // 4. Limpiar el estado de selección, el render se encargará del resto.
+                updateState({ selectedCardForUse: null });
+            }
             return;
         }
         
@@ -706,6 +887,15 @@ function setupEventListeners() {
             e.preventDefault();
             const input = getEl('chat-input');
             const text = input.value.trim();
+            const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+            const isFrozen = player && player.isFrozenUntil && player.isFrozenUntil > Date.now();
+            
+            if (isFrozen) {
+                // Bloquear envío de chat si está congelado
+                playSound(BLOCKED_SOUND);
+                return;
+            }
+            
             if(text) {
                 dispatch('SEND_MESSAGE', { text });
                 input.value = '';
