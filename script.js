@@ -36,7 +36,7 @@ const CardType = { FREEZE: 'FREEZE', SHIELD: 'SHIELD', THIEF: 'THIEF', PASSIVE_I
 const BoostType = { MULTITAP: 'MULTITAP', ENERGY_LIMIT: 'ENERGY_LIMIT' };
 
 const CARD_DEFINITIONS = {
-  [CardType.FREEZE]: { id: CardType.FREEZE, name: 'Congelar', description: 'Congela a un oponente por 10 minutos, impidiendo que gane monedas.', cost: 7500, isSingleUse: true },
+  [CardType.FREEZE]: { id: CardType.FREEZE, name: 'Congelar', description: 'Congela a un oponente por 3 minutos, impidiendo que gane monedas.', cost: 7500, isSingleUse: true },
   [CardType.SHIELD]: { id: CardType.SHIELD, name: 'Escudo', description: 'Te protege del próximo ataque de "Congelar" o "Llama". Se consume al usarse.', cost: 5000, isSingleUse: true },
   [CardType.THIEF]: { id: CardType.THIEF, name: 'Ladrón', description: 'Roba un 5% de las monedas de un oponente. Puede fallar.', cost: 10000, isSingleUse: true },
   [CardType.PASSIVE_INCOME_1]: { id: CardType.PASSIVE_INCOME_1, name: 'Data Miner v1', description: 'Genera 1 de Ganancia x Día (XP) por segundo.', cost: 20000, isSingleUse: false, passiveGain: 1 },
@@ -50,8 +50,8 @@ const BOOST_DEFINITIONS = {
 
 // Costo de rescate (Bailout)
 const FREEZE_BAILOUT_COST = 20000; 
-// Duración de castigos para simulación (10 mins base original)
-const FREEZE_DURATION_MS = 10 * 60 * 1000; 
+// Duración de castigos para simulación (AJUSTADO A 3 MINUTOS)
+const FREEZE_DURATION_MS = 3 * 60 * 1000; 
 const FLAME_DURATION_MS = 30 * 1000; // 30 segundos para FLAME
 
 // Sonidos internos (Base64 para baja latencia)
@@ -210,7 +210,7 @@ const gameApi = {
 // --- UTILITIES ---
 
 /**
- * Calcula el tiempo restante de congelamiento y lo formatea (usado también por FLAME).
+ * Calcula el tiempo restante de castigo y lo formatea.
  * @param {number} untilTimestamp El timestamp (ms) hasta el que está activo el efecto.
  * @returns {string | null} El tiempo restante en formato MM:SS, o null si ya expiró.
  */
@@ -230,12 +230,32 @@ function getRemainingTime(untilTimestamp) {
     return `${formattedMinutes}:${formattedSeconds}`;
 }
 
+/**
+ * Calcula el tiempo restante de subasta y lo formatea.
+ * @param {number} untilTimestamp El timestamp (ms) hasta el que está activo el efecto.
+ * @returns {string} El tiempo restante en formato HH:MM:SS, o '00:00:00'.
+ */
+function formatTimeRemaining(endTime) {
+    const totalSeconds = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
+    
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+
+    const formattedHours = String(hours).padStart(2, '0');
+    const formattedMinutes = String(minutes).padStart(2, '0');
+    const formattedSeconds = String(seconds).padStart(2, '0');
+
+    return `${formattedHours}:${formattedMinutes}:${formattedSeconds}`;
+}
+
+
 // Función para animar la pérdida de monedas (Efecto regresivo)
 let animationFrameId = null;
 
 function animateCoinLoss(initialCoins, targetCoins, durationMs = 500) {
     const startTime = performance.now();
-    const coinEl = getEl('coins-display'); // Asumiendo que HOME tiene un elemento con este ID
+    const coinEl = getEl('coins-display'); 
 
     if (!coinEl) return;
     
@@ -281,13 +301,13 @@ function updateState(newState) {
         if (oldPlayer && newPlayer && newPlayer.isBurningUntil && !oldPlayer.isBurningUntil) {
              // Si el jugador acaba de empezar a arder (isBurningUntil pasa de 0 a >0)
              
-             // NOTA: La pérdida real de monedas (5% inicial) debe ser enviada por el backend.
-             // Aquí, solo simulamos el target de la animación si hay una diferencia notable.
+             // NOTA: Usamos el oldPlayer.coins - newPlayer.coins (valor del backend) para determinar la pérdida inicial.
              const coinsDifference = oldPlayer.coins - newPlayer.coins;
              
-             // Si la diferencia es mayor a 0 (hubo pérdida inicial del 5% o más)
+             // Si la diferencia es mayor a 0 (hubo pérdida inicial del 5%)
              if (coinsDifference > 0) {
-                 const initialCoins = oldPlayer.coins;
+                 // El valor real ANTES de la pérdida es el nuevo valor + lo que se perdió.
+                 const initialCoins = newPlayer.coins + coinsDifference; 
                  const targetCoins = newPlayer.coins;
                  
                  // Guardar valores para la animación
@@ -407,6 +427,7 @@ function render() {
         // La navegación se deshabilita solo si está congelado
         renderNav(isFrozen); 
         renderFooter();
+        
         // Render current page
         const renderFunction = window[`render${state.activePage}Screen`];
         if (typeof renderFunction === 'function') {
@@ -463,9 +484,9 @@ function renderFreezeOverlay() {
         const canAfford = player.coins >= cost;
         const isLoading = state.loadingAction === 'bailout';
         
-        bailoutButton.textContent = isLoading 
-            ? `Pagando Rescate... ${Icons.Spinner.replace('w-5 h-5', 'w-4 h-4')}`
-            : `Pagar Rescate (${cost.toLocaleString()})`;
+        bailoutButton.innerHTML = isLoading 
+            ? `${Icons.Spinner.replace('w-5 h-5', 'w-4 h-4')} <span>Pagando Rescate...</span>`
+            : `<span>Pagar Rescate (${cost.toLocaleString()})</span>`;
             
         bailoutButton.disabled = !canAfford || isLoading;
         bailoutButton.dataset.cost = cost;
@@ -781,6 +802,63 @@ window.renderCARDSScreen = () => {
     `;
 };
 
+window.renderAUCTIONSScreen = () => {
+    const player = state.gameState.players.find(p => p.id === state.humanPlayerId);
+    const auction = state.gameState.auction || {};
+    const arcaComun = state.gameState.arcaComun || 0;
+    
+    // Si no hay subasta, mostrar mensaje
+    if (!auction.id) {
+         getEl('screen-AUCTIONS').innerHTML = `
+             <div class="flex flex-col items-center justify-center h-full text-center text-gray-500">
+                <h2 class="font-orbitron text-2xl mt-4">Remates (Arca Común)</h2>
+                <p class="mt-2">La próxima subasta del Arca Común comenzará pronto.</p>
+                <p>Pozo Actual: ${arcaComun.toLocaleString()}</p>
+             </div>
+         `;
+         return;
+    }
+    
+    const arcaComunCoinsEl = getEl('arca-comun-coins');
+    if (arcaComunCoinsEl) arcaComunCoinsEl.textContent = arcaComun.toLocaleString();
+
+    const auctionTimerEl = getEl('auction-timer');
+    const auctionPotEl = getEl('auction-pot');
+    const auctionBidEl = getEl('auction-bid');
+    const auctionLeaderEl = getEl('auction-leader');
+    const minBidDisplayEl = getEl('min-bid-display');
+    const bidButton = getEl('bid-button');
+
+    const remainingTime = formatTimeRemaining(auction.endTime);
+    const currentHighestBid = auction.currentHighestBid || 0;
+    const minBid = currentHighestBid + 100;
+    const isLeading = auction.highestBidderId === player.id;
+    const leaderNickname = isLeading ? 'Tú' : auction.highestBidderId;
+    
+    // Actualizar elementos
+    if (auctionTimerEl) auctionTimerEl.textContent = remainingTime;
+    if (auctionPotEl) auctionPotEl.textContent = auction.potCoins ? auction.potCoins.toLocaleString() : '0';
+    if (auctionBidEl) auctionBidEl.textContent = currentHighestBid.toLocaleString();
+    if (auctionLeaderEl) auctionLeaderEl.textContent = leaderNickname;
+    if (minBidDisplayEl) minBidDisplayEl.textContent = minBid.toLocaleString();
+
+    // Lógica del botón de puja
+    const isFrozen = player.isFrozenUntil && player.isFrozenUntil > Date.now();
+    const isLoading = state.loadingAction === 'bid_auction';
+    const canBid = player.coins >= minBid && !isFrozen && !isLoading;
+    
+    bidButton.innerHTML = isLoading 
+        ? `${Icons.Spinner.replace('w-5 h-5', 'w-4 h-4')} <span>Pujando...</span>`
+        : `<span>Pujar</span>`;
+    bidButton.disabled = !canBid;
+    
+    // Si el tiempo terminó, forzar actualización para ver resultados
+    if (remainingTime === '00:00:00' && !isLoading) {
+        // En un juego real, esto dispararía el fin de subasta y la carga del ganador.
+        // Aquí forzamos una recarga para limpiar la subasta simulada.
+         loadGameState(state.humanPlayerId);
+    }
+};
 
 // --- ACTION DISPATCHER & GAME LOGIC ---
 async function dispatch(type, payload) {
@@ -831,16 +909,31 @@ async function dispatch(type, payload) {
     try {
         const newState = await gameApi.dispatchAction(state.humanPlayerId, type, payload);
         
-        // Simulación de FREEZE_BAILOUT
-        if (type === 'FREEZE_BAILOUT') {
-             // Esta simulación DEBE ser confirmada por el backend.
+        // Simulación de FREEZE_BAILOUT (para UI instantánea)
+        if (type === 'FREEZE_BAILOUT' && player) {
              if (player.coins >= FREEZE_BAILOUT_COST) {
+                 // Esto es manejo optimista, el backend ya lo hizo
                  player.coins -= FREEZE_BAILOUT_COST;
-                 player.isFrozenUntil = 0; // Terminar el castigo
+                 player.isFrozenUntil = 0; 
              } else {
                  throw new Error("No tienes suficientes monedas para el rescate.");
              }
         }
+        
+        // Simulación de BID_AUCTION (para UI instantánea)
+        if (type === 'BID_AUCTION' && state.gameState.auction && player) {
+             const bidAmount = payload.bidAmount;
+             // Validación básica para la simulación
+             const minBid = state.gameState.auction.currentHighestBid + 100;
+             if (bidAmount >= minBid && bidAmount <= player.coins) {
+                 // Esto es manejo optimista. El backend tiene la verdad.
+                 // NOTA: El backend solo deduce la diferencia si es una nueva puja, pero el cliente siempre deduce el monto total, lo cual es más seguro para el UX.
+                 player.coins -= bidAmount;
+                 state.gameState.auction.currentHighestBid = bidAmount;
+                 state.gameState.auction.highestBidderId = player.id;
+             }
+        }
+
 
         updateState({ gameState: newState, error: null }); 
     } catch (e) {
@@ -880,18 +973,14 @@ async function registerPlayer(nickname) {
 async function loadGameState(playerId) {
     updateState({ isLoading: true, error: null });
     try {
-        const initialState = await gameApi.getGameState(playerId);
+        let initialState = await gameApi.getGameState(playerId);
         
         // ** SIMULACIÓN DE DATOS INICIALES (Requerida si el backend no proporciona todo) **
         if (!initialState || !initialState.players || !initialState.messages) {
              const baseState = initialState || {};
              const simPlayerId = state.humanPlayerId || 'player-sim-001';
              
-             // Simulación de estado de QUEMADURA (para probar el overlay)
-             // const burnUntil = Date.now() + FLAME_DURATION_MS;
-             // Simulación de estado de CONGELAMIENTO (para probar el overlay y el rescate)
-             // const freezeUntil = Date.now() + FREEZE_DURATION_MS;
-
+             // --- Simulación de Datos de Jugadores ---
              baseState.players = baseState.players || [{
                 id: simPlayerId,
                 nickname: 'SimPlayer',
@@ -900,12 +989,12 @@ async function loadGameState(playerId) {
                 coins: 50000,
                 dailyGain: 0,
                 maxDailyGain: 20,
-                energy: 500, // Menor a maxEnergy para simular regeneración
+                energy: 500,
                 maxEnergy: 1000,
                 boosts: { MULTITAP: 5, ENERGY_LIMIT: 1 },
-                cards: [CardType.FREEZE, CardType.FLAME, CardType.SHIELD], // Dar cartas para probar
-                isFrozenUntil: 0, // Inicia sin congelar
-                isBurningUntil: 0, // Inicia sin quemar
+                cards: [CardType.FREEZE, CardType.FLAME, CardType.SHIELD],
+                isFrozenUntil: 0, 
+                isBurningUntil: 0, 
                 hasShield: false,
                 isBot: false,
                 previousRank: 0,
@@ -933,7 +1022,7 @@ async function loadGameState(playerId) {
              ]; 
              baseState.messages = baseState.messages || [];
              
-             // Simulación de ArcaComun
+             // --- Simulación de ArcaComun y Subasta ---
              baseState.arcaComun = baseState.arcaComun || 50000;
              baseState.auction = baseState.auction || {
                  id: 'daily_auction_20251016',
@@ -960,6 +1049,7 @@ function regenerateEnergy(player) {
     const REGEN_RATE = 10; // Energía por segundo (simulación)
     // Regenerar si la energía no está al máximo
     if (player.energy < player.maxEnergy) {
+        // Asumiendo que BACKGROUND_SYNC_INTERVAL_MS es 5000ms (5s)
         player.energy = Math.min(player.maxEnergy, player.energy + (REGEN_RATE * (BACKGROUND_SYNC_INTERVAL_MS / 1000)));
     }
 }
@@ -981,7 +1071,7 @@ function initGameSession() {
             
             gameApi.getGameState(state.humanPlayerId).then(gs => {
                 // Mantener simulación de jugadores si el backend no los envía
-                if (!gs.players && state.gameState?.players) {
+                if (state.gameState && !gs.players) {
                      gs.players = state.gameState.players;
                      gs.messages = state.gameState.messages;
                      gs.arcaComun = state.gameState.arcaComun;
@@ -1022,9 +1112,11 @@ function setupEventListeners() {
     
     // Nuevo listener en el overlay para el sonido de bloqueo al intentar interactuar
     const freezeOverlay = getEl('freeze-overlay');
+    // NOTE: El botón de Rescate ya maneja su propio listener en renderFreezeOverlay,
+    // pero este evita el sonido si el clic fue en el botón.
     freezeOverlay.addEventListener('click', (e) => {
         // Reproduce el sonido de bloqueo en cualquier tap sobre el overlay, 
-        // pero permitimos el clic en el botón de rescate (bailout button)
+        // excepto si el clic fue en el botón de rescate (bailout button)
         if (!e.target.closest('#freeze-bailout-button')) {
             playSound(BLOCKED_SOUND);
         }
